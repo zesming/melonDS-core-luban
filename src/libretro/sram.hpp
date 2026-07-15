@@ -43,7 +43,7 @@ namespace MelonDsDs::sram  {
         SaveManager& operator=(const SaveManager &) = delete;
         SaveManager& operator=(SaveManager&&) noexcept;
 
-        /// Signals that SRAM was recently updated.
+        /// Updates the staged SRAM buffer when its contents changed.
         ///
         /// \param savedata Pointer to the entire SRAM buffer.
         /// Never changes during a game's lifetime.
@@ -51,7 +51,8 @@ namespace MelonDsDs::sram  {
         /// Never changes during a game's lifetime.
         /// \param writeoffset Starting position of the updated data
         /// \param writelen Length of the updated data.
-        void Flush(const uint8_t *savedata, uint32_t savelen, uint32_t writeoffset, uint32_t writelen);
+        /// \return Whether the staged SRAM contents or length changed.
+        bool Flush(const uint8_t *savedata, uint32_t savelen, uint32_t writeoffset, uint32_t writelen);
 
         [[nodiscard]] const uint8_t *Sram() const { return _sram.get(); }
         uint8_t *Sram() { return _sram.get(); }

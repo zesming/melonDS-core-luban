@@ -73,7 +73,7 @@ MelonDsDs::sram::SaveManager& MelonDsDs::sram::SaveManager::operator=(SaveManage
 }
 
 
-void MelonDsDs::sram::SaveManager::Flush(const u8 *savedata, u32 savelen, u32 writeoffset, u32 writelen) {
+bool MelonDsDs::sram::SaveManager::Flush(const u8 *savedata, u32 savelen, u32 writeoffset, u32 writelen) {
     ZoneScopedN(TracyFunction);
     if (_sram_length != savelen) {
         // If we loaded a game with a different SRAM length...
@@ -81,19 +81,40 @@ void MelonDsDs::sram::SaveManager::Flush(const u8 *savedata, u32 savelen, u32 wr
         _sram_length = savelen;
         _sram = std::make_unique<u8[]>(_sram_length);
 
-        memcpy(_sram.get(), savedata, _sram_length);
-    } else {
-        if ((writeoffset + writelen) > savelen) {
-            // If the write goes past the end of the SRAM, we have to wrap around
-            u32 len = savelen - writeoffset;
+        if (_sram_length > 0) {
+            memcpy(_sram.get(), savedata, _sram_length);
+        }
+        return true;
+    }
+
+    if (writelen == 0 || savelen == 0) {
+        return false;
+    }
+    if (writeoffset > savelen) {
+        return false;
+    }
+
+    bool changed = false;
+    if (writelen > savelen - writeoffset) {
+        // If the write goes past the end of the SRAM, we have to wrap around
+        u32 len = savelen - writeoffset;
+        if (len > 0 && memcmp(_sram.get() + writeoffset, savedata + writeoffset, len) != 0) {
             memcpy(_sram.get() + writeoffset, savedata + writeoffset, len);
-            len = writelen - len;
-            if (len > savelen) len = savelen;
+            changed = true;
+        }
+        len = writelen - len;
+        if (len > savelen) len = savelen;
+        if (len > 0 && memcmp(_sram.get(), savedata, len) != 0) {
             memcpy(_sram.get(), savedata, len);
-        } else {
+            changed = true;
+        }
+    } else {
+        if (memcmp(_sram.get() + writeoffset, savedata + writeoffset, writelen) != 0) {
             memcpy(_sram.get() + writeoffset, savedata + writeoffset, writelen);
+            changed = true;
         }
     }
+    return changed;
 }
 
 // Does not load the NDS SRAM, since retro_get_memory is used for that.
@@ -135,8 +156,8 @@ void MelonDsDs::CoreState::WriteNdsSave(std::span<const std::byte> savedata, uin
     // No need to maintain a flush timer for NDS SRAM,
     // because retro_get_memory lets us delegate autosave to the frontend.
 
-    if (_ndsSaveManager) {
-        _ndsSaveManager->Flush((const uint8_t*)savedata.data(), savedata.size(), writeoffset, writelen);
+    if (_ndsSaveManager && _ndsSaveManager->Flush((const uint8_t*)savedata.data(), savedata.size(), writeoffset, writelen)) {
+        ++_ndsSaveGeneration;
     }
 }
 
@@ -158,4 +179,3 @@ void MelonDsDs::CoreState::WriteFirmware(const Firmware& firmware, uint32_t writ
 
     _timeToFirmwareFlush = Config.FlushDelay();
 }
-

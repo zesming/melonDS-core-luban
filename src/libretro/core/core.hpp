@@ -17,6 +17,7 @@
 #ifndef MELONDSDS_CORE_HPP
 #define MELONDSDS_CORE_HPP
 
+#include <atomic>
 #include <cstddef>
 #include <libretro.h>
 #include <memory>
@@ -103,6 +104,7 @@ namespace MelonDsDs {
         void WriteNdsSave(std::span<const std::byte> savedata, uint32_t writeoffset, uint32_t writelen) noexcept;
         void WriteGbaSave(std::span<const std::byte> savedata, uint32_t writeoffset, uint32_t writelen) noexcept;
         void WriteFirmware(const melonDS::Firmware& firmware, uint32_t writeoffset, uint32_t writelen) noexcept;
+        [[nodiscard]] uint64_t GetNdsSaveGeneration() const noexcept { return _ndsSaveGeneration.load(); }
         bool UpdateOptionVisibility() noexcept;
 
         const melonDS::NDS* GetConsole() const noexcept { return Console.get(); }
@@ -155,6 +157,7 @@ namespace MelonDsDs {
         std::optional<retro::GameInfo> _gbaSaveInfo = std::nullopt;
         std::optional<sram::SaveManager> _ndsSaveManager = std::nullopt;
         std::optional<sram::SaveManager> _gbaSaveManager = std::nullopt;
+        std::atomic<uint64_t> _ndsSaveGeneration {0};
         std::optional<int> _timeToGbaFlush = std::nullopt;
         std::optional<int> _timeToFirmwareFlush = std::nullopt;
         mutable std::optional<size_t> _savestateSize = std::nullopt;

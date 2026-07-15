@@ -267,6 +267,10 @@ PUBLIC_SYMBOL size_t retro_get_memory_size(unsigned type) {
     return MelonDsDs::Core.GetMemorySize(type);
 }
 
+extern "C" PUBLIC_SYMBOL uint64_t melondsds_get_nds_save_generation(void) {
+    return MelonDsDs::Core.GetNdsSaveGeneration();
+}
+
 extern "C" void MelonDsDs::HardwareContextReset() noexcept {
     try {
         Core.ResetRenderState();
