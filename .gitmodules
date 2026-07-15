@@ -1,0 +1,27 @@
+[submodule "third_party/melonDS"]
+	path = third_party/melonDS
+	url = https://github.com/melonDS-emu/melonDS.git
+[submodule "third_party/libretro-common"]
+	path = third_party/libretro-common
+	url = https://github.com/JesseTG/libretro-common.git
+[submodule "third_party/embed-binaries"]
+	path = third_party/embed-binaries
+	url = https://github.com/andoalon/embed-binaries.git
+[submodule "third_party/glm"]
+	path = third_party/glm
+	url = https://github.com/g-truc/glm.git
+[submodule "third_party/pntr"]
+	path = third_party/pntr
+	url = https://github.com/robloach/pntr.git
+[submodule "third_party/fmt"]
+	path = third_party/fmt
+	url = https://github.com/fmtlib/fmt.git
+[submodule "third_party/yamc"]
+	path = third_party/yamc
+	url = https://github.com/yohhoy/yamc.git
+[submodule "third_party/span-lite"]
+	path = third_party/span-lite
+	url = https://github.com/martinmoene/span-lite.git
+[submodule "third_party/date"]
+	path = third_party/date
+	url = https://github.com/HowardHinnant/date.git
