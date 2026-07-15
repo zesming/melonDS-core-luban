@@ -914,7 +914,20 @@ bool MelonDsDs::CoreState::Unserialize(std::span<const std::byte> data) noexcept
         return false;
     }
 
-    return Console->DoSavestate(&savestate) && !savestate.Error;
+    const bool lidClosed = Console->IsLidClosed();
+    const bool loaded = Console->DoSavestate(&savestate) && !savestate.Error;
+    if (loaded && !lidClosed && (Console->CPUStop & melonDS::CPUStop_Sleep) &&
+        (Console->IE[1] & (1U << melonDS::IRQ_LidOpen))) {
+        // This upstream revision does not serialize KeyInput (and therefore the
+        // lid bit), while it does serialize the sleep flag.  Loading a state captured
+        // with the lid closed into an open-lid session would otherwise remain asleep
+        // forever.
+        // Re-asserting the open state dispatches the same LidOpen IRQ as a real
+        // open event without changing the frontend's current lid state.
+        retro::info("Waking a sleeping savestate because the current lid state is open");
+        Console->SetLidClosed(false);
+    }
+    return loaded;
 }
 
 std::byte* MelonDsDs::CoreState::GetMemoryData(unsigned id) noexcept {
