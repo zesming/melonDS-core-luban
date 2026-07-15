@@ -176,10 +176,14 @@ bool retro::set_core_options(const retro_core_options_v2& options) noexcept {
     retro::debug("Frontend reports core options version: {}", version);
 
     if (version >= 2) {
-        if (retro::environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2, (void *) &options)) {
-            retro::debug("V2 core options set successfully");
-            return true;
-        }
+        // For V2, the environment callback return value only reports whether
+        // the frontend supports option categories. The definitions are
+        // registered regardless, so a frontend without a categories UI must
+        // not be treated as lacking V2 support.
+        const bool categoriesSupported =
+            retro::environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2, (void *) &options);
+        retro::debug("V2 core options set successfully (categories supported: {})", categoriesSupported);
+        return true;
     }
 
     retro::warn("V2 core options not supported, trying V1");
