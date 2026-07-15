@@ -108,7 +108,7 @@ void MelonDsDs::CoreState::UnloadGame() noexcept {
 
         retro_assert(!_ndsInfo->GetData().empty());
         const melonDS::NDSHeader& header = *reinterpret_cast<const melonDS::NDSHeader*>(_ndsInfo->GetData().data());
-        if (header.IsDSiWare()) {
+        if (Console && header.IsDSiWare()) {
             // And that game was a DSiWare game...
             retro_assert(Console->ConsoleType == 1);
             retro_assert(dynamic_cast<melonDS::DSi*>(Console.get()) != nullptr);

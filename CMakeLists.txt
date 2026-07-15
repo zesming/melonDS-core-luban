@@ -31,6 +31,13 @@ endif ()
 message(STATUS "CMAKE_SYSTEM_PROCESSOR: ${CMAKE_SYSTEM_PROCESSOR}")
 
 set(CMAKE_POSITION_INDEPENDENT_CODE TRUE)
+if (CMAKE_SYSTEM_NAME STREQUAL "OHOS")
+    # HarmonyOS's layered toolchain needs these SDK roots in nested try_compile
+    # projects such as melonDS's IPO capability check.
+    set(CMAKE_TRY_COMPILE_PLATFORM_VARIABLES
+        "OHOS_SDK_NATIVE;HMOS_SDK_NATIVE;OHOS_ARCH"
+        CACHE STRING "HarmonyOS variables forwarded to try_compile projects." FORCE)
+endif ()
 include(CheckSymbolExists)
 include(CheckIncludeFile)
 include(CheckIncludeFiles)
