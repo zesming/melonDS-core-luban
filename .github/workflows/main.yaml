@@ -23,6 +23,7 @@ on:
 jobs:
   check-testfile-secrets:
     name: Check Test File Secrets
+    if: github.event_name != 'pull_request_target'
     runs-on: ubuntu-latest
     outputs:
       available: ${{ steps.check.outputs.available }}
