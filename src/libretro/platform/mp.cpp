@@ -23,6 +23,9 @@
 
 using namespace melonDS;
 
+extern "C" void melondsds_record_mp_begin_call(void);
+extern "C" void melondsds_record_mp_end_call(void);
+
 constexpr retro_fastforwarding_override FASTFORWARD_OVERRIDE_FORBIDDEN = {
     1.0f,
     false,
@@ -88,8 +91,10 @@ bool MelonDsDs::CoreState::MpActive() const noexcept {
 // Not much we can do in Begin and End
 void Platform::MP_Begin(void*) {
     ZoneScopedN(TracyFunction);
+    melondsds_record_mp_begin_call();
 }
 
 void Platform::MP_End(void*) {
     ZoneScopedN(TracyFunction);
+    melondsds_record_mp_end_call();
 }
