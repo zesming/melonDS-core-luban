@@ -2583,6 +2583,15 @@ void NDS::ARM7Write8(u32 addr, u8 val)
         NDS::ARM7IOWrite8(addr, val);
         return;
 
+    case 0x04800000:
+        if (addr < 0x04810000)
+        {
+            if (!(PowerControl7 & (1<<1))) return;
+            Wifi.Write8(addr, val);
+            return;
+        }
+        break;
+
     case 0x06000000:
     case 0x06800000:
         JIT.CheckAndInvalidate<1, ARMJIT_Memory::memregion_VWRAM>(addr);

@@ -168,6 +168,7 @@ public:
     void USTimer(u32 param);
 
     u16 Read(u32 addr);
+    void Write8(u32 addr, u8 val);
     void Write(u32 addr, u16 val);
 
     const u8* GetMAC() const;

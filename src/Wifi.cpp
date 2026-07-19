@@ -24,6 +24,63 @@
 #include "WifiAP.h"
 #include "Platform.h"
 
+extern "C" void melondsds_record_mp_channel_set_call(void);
+extern "C" void melondsds_record_mp_tx_start_call(void);
+extern "C" void melondsds_record_mp_tx_frame_call(void);
+extern "C" void melondsds_record_mp_rx_check_call(void);
+extern "C" void melondsds_record_mp_client_sync_call(void);
+extern "C" void melondsds_record_mp_channel_change_call(int32_t channel);
+extern "C" void melondsds_record_mp_fire_tx_gate(int32_t rxCnt,
+                                                 int32_t txReq,
+                                                 int32_t txBusy,
+                                                 int32_t txSlotMask,
+                                                 int32_t txStartMask,
+                                                 int32_t txSlotLoc1,
+                                                 int32_t txSlotCmd,
+                                                 int32_t txSlotLoc2,
+                                                 int32_t txSlotLoc3);
+extern "C" void melondsds_record_mp_rx_cnt_write(int32_t raw, int32_t latched);
+extern "C" void melondsds_record_mp_wifi_register_write(int32_t addr, int32_t value, int32_t cpu, int32_t pc);
+extern "C" void melondsds_record_mp_wifi_register_write_trace(int32_t addr, int32_t value, int32_t cpu, int32_t pc);
+extern "C" void melondsds_record_mp_wifi_register_read(int32_t addr, int32_t value, int32_t cpu, int32_t pc);
+extern "C" void melondsds_record_mp_tx_req_set_write(int32_t value,
+                                                     int32_t cpu,
+                                                     int32_t pc,
+                                                     int32_t txSlotLoc1,
+                                                     int32_t txSlotCmd,
+                                                     int32_t txSlotLoc2,
+                                                     int32_t txSlotLoc3);
+extern "C" void melondsds_record_mp_tx_slot_write(int32_t addr, int32_t value, int32_t cpu, int32_t pc);
+extern "C" void melondsds_record_mp_tx_slot_cmd_write(int32_t raw,
+                                                      int32_t latched,
+                                                      int32_t cmdCounter,
+                                                      int32_t blockedByCmdCounter);
+extern "C" void melondsds_record_mp_setup_snapshot(int32_t modeReset,
+                                                   int32_t modeWep,
+                                                   int32_t powerState,
+                                                   int32_t rxBufBegin,
+                                                   int32_t rxBufEnd,
+                                                   int32_t rxBufWriteAddr,
+                                                   int32_t txBufWriteAddr,
+                                                   int32_t txBufCount);
+extern "C" void melondsds_record_mp_mode_reset_write(int32_t raw, int32_t latched);
+extern "C" void melondsds_record_mp_mode_wep_write(int32_t value);
+extern "C" void melondsds_record_mp_power_state_write(int32_t raw, int32_t latched, int32_t ignored);
+extern "C" void melondsds_record_mp_rx_buf_write_addr_write(int32_t value);
+extern "C" void melondsds_record_mp_tx_buf_write_addr_write(int32_t value);
+extern "C" void melondsds_record_mp_tx_buf_count_write(int32_t value);
+extern "C" void melondsds_record_mp_tx_buf_data_write(int32_t addr, int32_t value, int32_t nextAddr, int32_t remainingCount);
+extern "C" void melondsds_record_mp_rf_channel_snapshot(int32_t raw1,
+                                                        int32_t raw2,
+                                                        int32_t index1,
+                                                        int32_t index2,
+                                                        int32_t valid,
+                                                        int32_t raw1MatchChannel,
+                                                        int32_t raw2MatchChannel,
+                                                        int32_t closestChannel,
+                                                        int32_t closestRaw1,
+                                                        int32_t closestRaw2);
+
 namespace melonDS
 {
 using Platform::Log;
@@ -37,6 +94,39 @@ using Platform::LogLevel;
 
 #define IOPORT(x) IO[(x)>>1]
 #define IOPORT8(x) ((u8*)IO)[x]
+
+static bool IsMpWifiRegisterReadDiagnostic(u32 addr)
+{
+    switch (addr)
+    {
+    case Wifi::W_ModeReset:
+    case Wifi::W_ModeWEP:
+    case Wifi::W_RXCnt:
+    case Wifi::W_PowerState:
+    case Wifi::W_TXSlotCmd:
+    case Wifi::W_TXSlotLoc1:
+    case Wifi::W_TXSlotLoc2:
+    case Wifi::W_TXSlotLoc3:
+    case Wifi::W_TXReqRead:
+    case Wifi::W_TXBusy:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static void RecordMpWifiRegisterRead(NDS& nds, u32 addr, u16 value)
+{
+    if (!IsMpWifiRegisterReadDiagnostic(addr))
+        return;
+
+    const int32_t readCpu = nds.CurCPU == 0 ? 9 : 7;
+    const int32_t readPc = static_cast<int32_t>(nds.GetPC(nds.CurCPU));
+    melondsds_record_mp_wifi_register_read(static_cast<int32_t>(addr),
+                                           static_cast<int32_t>(value),
+                                           readCpu,
+                                           readPc);
+}
 
 // destination MACs for MP frames
 const u8 Wifi::MPCmdMAC[6]   = {0x03, 0x09, 0xBF, 0x00, 0x00, 0x00};
@@ -650,6 +740,7 @@ void Wifi::TXSendFrame(const TXSlot* slot, int num)
 
     if (CurChannel == 0) return;
     TXBuffer[9] = CurChannel;
+    melondsds_record_mp_tx_frame_call();
 
     switch (num)
     {
@@ -756,11 +847,8 @@ void Wifi::StartTX_Beacon()
 
 void Wifi::FireTX()
 {
-    if (!(IOPORT(W_RXCnt) & 0x8000))
-        return;
-
+    u16 rxcnt = IOPORT(W_RXCnt);
     u16 txbusy = IOPORT(W_TXBusy);
-
     u16 txreq = IOPORT(W_TXReqRead);
     u16 txstart = 0;
     if (IOPORT(W_TXSlotLoc1) & 0x8000) txstart |= 0x0001;
@@ -768,10 +856,22 @@ void Wifi::FireTX()
     if (IOPORT(W_TXSlotLoc2) & 0x8000) txstart |= 0x0004;
     if (IOPORT(W_TXSlotLoc3) & 0x8000) txstart |= 0x0008;
 
+    u16 txslotmask = txstart;
     txstart &= txreq;
     txstart &= ~txbusy;
+    melondsds_record_mp_fire_tx_gate(rxcnt, txreq, txbusy, txslotmask, txstart,
+                                     IOPORT(W_TXSlotLoc1),
+                                     IOPORT(W_TXSlotCmd),
+                                     IOPORT(W_TXSlotLoc2),
+                                     IOPORT(W_TXSlotLoc3));
+
+    if (!(rxcnt & 0x8000))
+        return;
 
     IOPORT(W_TXBusy) = txbusy | txstart;
+    if (txstart) {
+        melondsds_record_mp_tx_start_call();
+    }
 
     if (txstart & 0x0008)
     {
@@ -1563,6 +1663,8 @@ void Wifi::MPClientReplyRX(int client)
 
 bool Wifi::CheckRX(int type) // 0=regular 1=MP replies 2=MP host frames
 {
+    melondsds_record_mp_rx_check_call();
+
     if (IOPORT(W_PowerState) & (1<<9))
         return false;
 
@@ -1677,6 +1779,7 @@ bool Wifi::CheckRX(int type) // 0=regular 1=MP replies 2=MP host frames
 
             IsMP = true;
             IsMPClient = true;
+            melondsds_record_mp_client_sync_call();
             USTimestamp = timestamp;
             NextSync = RXTimestamp + (framelen * (txrate==0x14 ? 4:8));
         }
@@ -1947,9 +2050,30 @@ void Wifi::ChangeChannel()
     u32 val2 = RFRegs[RFChannelIndex[1]];
 
     CurChannel = 0;
+    int raw1MatchChannel = 0;
+    int raw2MatchChannel = 0;
+    int closestChannel = 0;
+    u32 closestRaw1 = 0;
+    u32 closestRaw2 = 0;
+    u32 closestDelta = 0xFFFFFFFF;
 
     for (int i = 0; i < 14; i++)
     {
+        if (raw1MatchChannel == 0 && val1 == RFChannelData[i][0])
+            raw1MatchChannel = i+1;
+        if (raw2MatchChannel == 0 && val2 == RFChannelData[i][1])
+            raw2MatchChannel = i+1;
+
+        const u32 delta1 = val1 > RFChannelData[i][0] ? val1 - RFChannelData[i][0] : RFChannelData[i][0] - val1;
+        const u32 delta2 = val2 > RFChannelData[i][1] ? val2 - RFChannelData[i][1] : RFChannelData[i][1] - val2;
+        if (delta1 <= 0xFFFF && delta2 <= 0xFFFF && delta1 + delta2 < closestDelta)
+        {
+            closestDelta = delta1 + delta2;
+            closestChannel = i+1;
+            closestRaw1 = RFChannelData[i][0];
+            closestRaw2 = RFChannelData[i][1];
+        }
+
         if (val1 == RFChannelData[i][0] && val2 == RFChannelData[i][1])
         {
             CurChannel = i+1;
@@ -1957,10 +2081,28 @@ void Wifi::ChangeChannel()
         }
     }
 
+    melondsds_record_mp_rf_channel_snapshot(val1,
+                                            val2,
+                                            RFChannelIndex[0],
+                                            RFChannelIndex[1],
+                                            CurChannel > 0 ? 1 : 0,
+                                            raw1MatchChannel,
+                                            raw2MatchChannel,
+                                            closestChannel,
+                                            closestRaw1,
+                                            closestRaw2);
+
     if (CurChannel > 0)
+    {
+        melondsds_record_mp_channel_change_call(CurChannel);
+        melondsds_record_mp_channel_set_call();
         Log(LogLevel::Debug, "wifi: switching to channel %d\n", CurChannel);
+    }
     else
+    {
+        melondsds_record_mp_channel_change_call(0);
         Log(LogLevel::Debug, "wifi: invalid channel values %05X:%05X\n", val1, val2);
+    }
 }
 
 void Wifi::RFTransfer_Type2()
@@ -2086,7 +2228,11 @@ u16 Wifi::Read(u32 addr)
         break;
 
     case W_TXBusy:
-        return IOPORT(W_TXBusy) & 0x001F; // no bit for MP replies. odd
+        {
+            u16 ret = IOPORT(W_TXBusy) & 0x001F; // no bit for MP replies. odd
+            RecordMpWifiRegisterRead(NDS, addr, ret);
+            return ret;
+        }
 
     case W_CMDStat0:
     case W_CMDStat1:
@@ -2103,7 +2249,27 @@ u16 Wifi::Read(u32 addr)
         }
     }
 
-    return IOPORT(addr&0xFFF);
+    u16 ret = IOPORT(addr&0xFFF);
+    RecordMpWifiRegisterRead(NDS, addr, ret);
+    return ret;
+}
+
+void Wifi::Write8(u32 addr, u8 val)
+{
+    if (addr >= 0x04810000)
+        return;
+
+    const u32 halfwordAddr = addr & ~0x1;
+    const u32 normalizedAddr = halfwordAddr & 0x7FFE;
+    u16 oldValue = 0;
+    if (normalizedAddr >= 0x4000 && normalizedAddr < 0x6000)
+        oldValue = *(u16*)&RAM[normalizedAddr & 0x1FFE];
+    else
+        oldValue = IOPORT(normalizedAddr & 0xFFF);
+    const u16 mergedValue = (addr & 0x1)
+        ? static_cast<u16>((oldValue & 0x00FF) | (static_cast<u16>(val) << 8))
+        : static_cast<u16>((oldValue & 0xFF00) | val);
+    Write(halfwordAddr, mergedValue);
 }
 
 void Wifi::Write(u32 addr, u16 val)
@@ -2121,10 +2287,16 @@ void Wifi::Write(u32 addr, u16 val)
     if (addr >= 0x2000 && addr < 0x4000)
         return;
 
+    melondsds_record_mp_wifi_register_write_trace(addr,
+                                                  val,
+                                                  NDS.CurCPU == 0 ? 9 : 7,
+                                                  static_cast<int32_t>(NDS.GetPC(NDS.CurCPU)));
+
     switch (addr)
     {
     case W_ModeReset:
         {
+            const u16 raw = val;
             u16 oldval = IOPORT(W_ModeReset);
             IOPORT(W_ModeReset) = val & 0x0001;
 
@@ -2180,6 +2352,10 @@ void Wifi::Write(u32 addr, u16 val)
                 IOPORT(0x224) = 0x0003;
                 IOPORT(0x230) = 0x0047;
             }
+            melondsds_record_mp_mode_reset_write(raw, IOPORT(W_ModeReset));
+            melondsds_record_mp_setup_snapshot(IOPORT(W_ModeReset), IOPORT(W_ModeWEP), IOPORT(W_PowerState),
+                                               IOPORT(W_RXBufBegin), IOPORT(W_RXBufEnd), IOPORT(W_RXBufWriteAddr),
+                                               IOPORT(W_TXBufWriteAddr), IOPORT(W_TXBufCount));
         }
         return;
 
@@ -2199,6 +2375,10 @@ void Wifi::Write(u32 addr, u16 val)
 
             UpdatePowerStatus(0);
         }
+        melondsds_record_mp_mode_wep_write(IOPORT(W_ModeWEP));
+        melondsds_record_mp_setup_snapshot(IOPORT(W_ModeReset), IOPORT(W_ModeWEP), IOPORT(W_PowerState),
+                                           IOPORT(W_RXBufBegin), IOPORT(W_RXBufEnd), IOPORT(W_RXBufWriteAddr),
+                                           IOPORT(W_TXBufWriteAddr), IOPORT(W_TXBufCount));
         return;
 
     case W_IE:
@@ -2246,8 +2426,13 @@ void Wifi::Write(u32 addr, u16 val)
         return;
 
     case W_PowerState:
+    {
+        const u16 raw = val;
         if ((IOPORT(W_ModeWEP) & 0x7) != 3)
+        {
+            melondsds_record_mp_power_state_write(raw, IOPORT(W_PowerState), 1);
             return;
+        }
 
         val = (IOPORT(W_PowerState) & 0x0300) | (val & 0x0003);
         if ((val & 0x0300) == 0x0200)
@@ -2260,7 +2445,12 @@ void Wifi::Write(u32 addr, u16 val)
 
         IOPORT(W_PowerState) = val;
         UpdatePowerStatus(0);
+        melondsds_record_mp_power_state_write(raw, IOPORT(W_PowerState), 0);
+        melondsds_record_mp_setup_snapshot(IOPORT(W_ModeReset), IOPORT(W_ModeWEP), IOPORT(W_PowerState),
+                                           IOPORT(W_RXBufBegin), IOPORT(W_RXBufEnd), IOPORT(W_RXBufWriteAddr),
+                                           IOPORT(W_TXBufWriteAddr), IOPORT(W_TXBufCount));
         return;
+    }
 
     case W_PowerForce:
         val &= 0x8001;
@@ -2327,6 +2517,11 @@ void Wifi::Write(u32 addr, u16 val)
 
 
     case W_RXCnt:
+    {
+        const u16 raw = val;
+        const int32_t writeCpu = NDS.CurCPU == 0 ? 9 : 7;
+        const int32_t writePc = static_cast<int32_t>(NDS.GetPC(NDS.CurCPU));
+        melondsds_record_mp_wifi_register_write(addr, raw, writeCpu, writePc);
         if (val & 0x0001)
         {
             IOPORT(W_RXBufWriteCursor) = IOPORT(W_RXBufWriteAddr);
@@ -2341,8 +2536,10 @@ void Wifi::Write(u32 addr, u16 val)
             FireTX();
         }
         val &= 0xFF0E;
+        melondsds_record_mp_rx_cnt_write(raw, val);
         if (val & 0x7FFF) Log(LogLevel::Warn, "wifi: unknown RXCNT bits set %04X\n", val);
         break;
+    }
 
     case W_RXBufDataRead:
         Log(LogLevel::Warn, "wifi: writing to RXBUF_DATA_READ. wat\n");
@@ -2363,6 +2560,8 @@ void Wifi::Write(u32 addr, u16 val)
     case W_RXBufWriteAddr:
     case W_RXBufReadCursor:
         val &= 0x0FFF;
+        if (addr == W_RXBufWriteAddr)
+            melondsds_record_mp_rx_buf_write_addr_write(val);
         break;
 
 
@@ -2370,9 +2569,21 @@ void Wifi::Write(u32 addr, u16 val)
         IOPORT(W_TXReqRead) &= ~val;
         return;
     case W_TXReqSet:
+    {
+        const int32_t writeCpu = NDS.CurCPU == 0 ? 9 : 7;
+        const int32_t writePc = static_cast<int32_t>(NDS.GetPC(NDS.CurCPU));
+        melondsds_record_mp_wifi_register_write(addr, val, writeCpu, writePc);
+        melondsds_record_mp_tx_req_set_write(val,
+                                             writeCpu,
+                                             writePc,
+                                             IOPORT(W_TXSlotLoc1),
+                                             IOPORT(W_TXSlotCmd),
+                                             IOPORT(W_TXSlotLoc2),
+                                             IOPORT(W_TXSlotLoc3));
         IOPORT(W_TXReqRead) |= val;
         FireTX();
         return;
+    }
 
     case W_TXSlotReset:
         if (val & 0x0001) IOPORT(W_TXSlotLoc1) &= 0x7FFF;
@@ -2406,16 +2617,21 @@ void Wifi::Write(u32 addr, u16 val)
                 if (IOPORT(W_TXBufCount) == 0)
                     SetIRQ(8);
             }
+            melondsds_record_mp_tx_buf_data_write(wraddr, val, IOPORT(W_TXBufWriteAddr), IOPORT(W_TXBufCount));
         }
         return;
 
     case W_TXBufWriteAddr:
     case W_TXBufGapAddr:
         val &= 0x1FFE;
+        if (addr == W_TXBufWriteAddr)
+            melondsds_record_mp_tx_buf_write_addr_write(val);
         break;
     case W_TXBufGapSize:
     case W_TXBufCount:
         val &= 0x0FFF;
+        if (addr == W_TXBufCount)
+            melondsds_record_mp_tx_buf_count_write(val);
         break;
 
     case W_TXSlotBeacon:
@@ -2423,17 +2639,30 @@ void Wifi::Write(u32 addr, u16 val)
         break;
 
     case W_TXSlotCmd:
+    {
+        const u16 raw = val;
         if (CmdCounter == 0)
             val = (val & 0x7FFF) | (IOPORT(W_TXSlotCmd) & 0x8000);
+        melondsds_record_mp_tx_slot_cmd_write(raw,
+                                              val,
+                                              static_cast<int32_t>(CmdCounter),
+                                              ((raw ^ val) & 0x8000) ? 1 : 0);
+    }
         // fall-through
     case W_TXSlotLoc1:
     case W_TXSlotLoc2:
     case W_TXSlotLoc3:
         // checkme: is it possible to cancel a queued transfer that hasn't started yet
         // by clearing bit15 here?
+    {
+        const int32_t writeCpu = NDS.CurCPU == 0 ? 9 : 7;
+        const int32_t writePc = static_cast<int32_t>(NDS.GetPC(NDS.CurCPU));
+        melondsds_record_mp_wifi_register_write(addr, val, writeCpu, writePc);
+        melondsds_record_mp_tx_slot_write(addr, val, writeCpu, writePc);
         IOPORT(addr&0xFFF) = val;
         FireTX();
         return;
+    }
 
     case 0x228:
     case 0x244:
