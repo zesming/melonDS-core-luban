@@ -49,7 +49,9 @@ extern "C" void melondsds_record_mp_tx_req_set_write(int32_t value,
                                                      int32_t txSlotLoc1,
                                                      int32_t txSlotCmd,
                                                      int32_t txSlotLoc2,
-                                                     int32_t txSlotLoc3);
+                                                     int32_t txSlotLoc3,
+                                                     int32_t txBufWriteAddr,
+                                                     int32_t txBufCount);
 extern "C" void melondsds_record_mp_tx_slot_write(int32_t addr, int32_t value, int32_t cpu, int32_t pc);
 extern "C" void melondsds_record_mp_tx_slot_cmd_write(int32_t raw,
                                                       int32_t latched,
@@ -2579,7 +2581,9 @@ void Wifi::Write(u32 addr, u16 val)
                                              IOPORT(W_TXSlotLoc1),
                                              IOPORT(W_TXSlotCmd),
                                              IOPORT(W_TXSlotLoc2),
-                                             IOPORT(W_TXSlotLoc3));
+                                             IOPORT(W_TXSlotLoc3),
+                                             IOPORT(W_TXBufWriteAddr),
+                                             IOPORT(W_TXBufCount));
         IOPORT(W_TXReqRead) |= val;
         FireTX();
         return;
