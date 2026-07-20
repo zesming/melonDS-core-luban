@@ -57,6 +57,14 @@ using melonDS::NDSHeader;
 using namespace melonDS::DSi_NAND;
 using melonDS::DSi_TMD::TitleMetadata;
 
+extern "C" void melondsds_record_system_file_diagnostics(int32_t requestedMode,
+                                                          int32_t firmwareSource,
+                                                          int32_t biosSource,
+                                                          int32_t requestedBootMode,
+                                                          int32_t effectiveBootMode,
+                                                          int32_t forcedDirectBoot,
+                                                          int32_t firmwareBootable);
+
 namespace MelonDsDs {
     const char *TMD_DIR_NAME = "tmd";
     const char* SENTINEL_NAME = "melon.dat";
@@ -245,12 +253,15 @@ static MelonDsDs::NdsCreationArgs MelonDsDs::GetNdsArgs(
 
     // Now that we've loaded the system files, let's see if we can use them
 
-    auto bootMode = config.BootMode();
+    const auto requestedBootMode = config.BootMode();
+    auto bootMode = requestedBootMode;
+    bool forcedDirectBoot = false;
     if (bootMode == BootMode::Native && !(bios7Loaded && bios9Loaded && firmware->IsBootable())) {
         // If we want to try a native boot, but the BIOS files aren't all native or the firmware isn't bootable...
         retro::warn("Native boot requires bootable firmware and native BIOS files; forcing Direct Boot mode");
 
         bootMode = BootMode::Direct;
+        forcedDirectBoot = true;
         // TODO: Check whether this is necessary later, when actually booting the DS
     }
 
@@ -267,6 +278,15 @@ static MelonDsDs::NdsCreationArgs MelonDsDs::GetNdsArgs(
         ndsargs.ARM7BIOS = std::make_unique<melonDS::ARM7BIOSImage>(melonDS::FreeBIOSGetNtrArm7());
         retro::debug("Installed built-in ARM7 and ARM9 NDS BIOS images");
     }
+
+    melondsds_record_system_file_diagnostics(
+        config.SysfileMode() == SysfileMode::Native ? 1 : 0,
+        isFirmwareGenerated ? 0 : 1,
+        (bios7Loaded && bios9Loaded) ? 1 : 0,
+        requestedBootMode == BootMode::Native ? 1 : 0,
+        bootMode == BootMode::Native ? 1 : 0,
+        forcedDirectBoot ? 1 : 0,
+        firmware->IsBootable() ? 1 : 0);
 
     CustomizeFirmware(config, *firmware);
     ndsargs.Firmware = std::move(*firmware);

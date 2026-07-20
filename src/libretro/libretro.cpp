@@ -156,6 +156,13 @@ std::atomic<int32_t> g_mpRfRaw2MatchChannel{0};
 std::atomic<int32_t> g_mpRfClosestChannel{0};
 std::atomic<int32_t> g_mpRfClosestRaw1{0};
 std::atomic<int32_t> g_mpRfClosestRaw2{0};
+std::atomic<int32_t> g_sysfileRequestedMode{0};
+std::atomic<int32_t> g_sysfileFirmwareSource{0};
+std::atomic<int32_t> g_sysfileBiosSource{0};
+std::atomic<int32_t> g_sysfileRequestedBootMode{0};
+std::atomic<int32_t> g_sysfileEffectiveBootMode{0};
+std::atomic<int32_t> g_sysfileForcedDirectBoot{0};
+std::atomic<int32_t> g_sysfileFirmwareBootable{0};
 std::mutex g_mpWifiRegWriteTraceMutex;
 char g_mpWifiRegWriteTraceTail[256] = "";
 }
@@ -417,6 +424,22 @@ extern "C" void melondsds_record_mp_rf_channel_snapshot(int32_t raw1,
     if (valid) {
         g_mpRfValidChannelSnapshots.fetch_add(1, std::memory_order_relaxed);
     }
+}
+
+extern "C" void melondsds_record_system_file_diagnostics(int32_t requestedMode,
+                                                          int32_t firmwareSource,
+                                                          int32_t biosSource,
+                                                          int32_t requestedBootMode,
+                                                          int32_t effectiveBootMode,
+                                                          int32_t forcedDirectBoot,
+                                                          int32_t firmwareBootable) {
+    g_sysfileRequestedMode.store(requestedMode, std::memory_order_relaxed);
+    g_sysfileFirmwareSource.store(firmwareSource, std::memory_order_relaxed);
+    g_sysfileBiosSource.store(biosSource, std::memory_order_relaxed);
+    g_sysfileRequestedBootMode.store(requestedBootMode, std::memory_order_relaxed);
+    g_sysfileEffectiveBootMode.store(effectiveBootMode, std::memory_order_relaxed);
+    g_sysfileForcedDirectBoot.store(forcedDirectBoot, std::memory_order_relaxed);
+    g_sysfileFirmwareBootable.store(firmwareBootable, std::memory_order_relaxed);
 }
 
 static void resetMpDiagnostics() {
@@ -945,6 +968,22 @@ extern "C" PUBLIC_SYMBOL void melondsds_get_mp_wifi_reg_write_trace(char *buffer
     }
     std::lock_guard<std::mutex> lock(g_mpWifiRegWriteTraceMutex);
     strlcpy(buffer, g_mpWifiRegWriteTraceTail, bufferSize);
+}
+
+extern "C" PUBLIC_SYMBOL void melondsds_get_system_file_diagnostics(int32_t *requestedMode,
+                                                                    int32_t *firmwareSource,
+                                                                    int32_t *biosSource,
+                                                                    int32_t *requestedBootMode,
+                                                                    int32_t *effectiveBootMode,
+                                                                    int32_t *forcedDirectBoot,
+                                                                    int32_t *firmwareBootable) {
+    if (requestedMode) *requestedMode = g_sysfileRequestedMode.load(std::memory_order_relaxed);
+    if (firmwareSource) *firmwareSource = g_sysfileFirmwareSource.load(std::memory_order_relaxed);
+    if (biosSource) *biosSource = g_sysfileBiosSource.load(std::memory_order_relaxed);
+    if (requestedBootMode) *requestedBootMode = g_sysfileRequestedBootMode.load(std::memory_order_relaxed);
+    if (effectiveBootMode) *effectiveBootMode = g_sysfileEffectiveBootMode.load(std::memory_order_relaxed);
+    if (forcedDirectBoot) *forcedDirectBoot = g_sysfileForcedDirectBoot.load(std::memory_order_relaxed);
+    if (firmwareBootable) *firmwareBootable = g_sysfileFirmwareBootable.load(std::memory_order_relaxed);
 }
 
 extern "C" PUBLIC_SYMBOL void melondsds_reset_mp_diagnostics(void) {
