@@ -108,6 +108,8 @@ std::atomic<int32_t> g_mpLastTxReqSetSlotLoc1{0};
 std::atomic<int32_t> g_mpLastTxReqSetSlotCmd{0};
 std::atomic<int32_t> g_mpLastTxReqSetSlotLoc2{0};
 std::atomic<int32_t> g_mpLastTxReqSetSlotLoc3{0};
+std::atomic<int32_t> g_mpLastTxReqSetTxBufWriteAddr{0};
+std::atomic<int32_t> g_mpLastTxReqSetTxBufCount{0};
 std::atomic<int32_t> g_mpTxSlotWriteCalls{0};
 std::atomic<int32_t> g_mpLastTxSlotWriteAddr{0};
 std::atomic<int32_t> g_mpLastTxSlotWriteValue{0};
@@ -290,7 +292,9 @@ extern "C" void melondsds_record_mp_tx_req_set_write(int32_t value,
                                                      int32_t txSlotLoc1,
                                                      int32_t txSlotCmd,
                                                      int32_t txSlotLoc2,
-                                                     int32_t txSlotLoc3) {
+                                                     int32_t txSlotLoc3,
+                                                     int32_t txBufWriteAddr,
+                                                     int32_t txBufCount) {
     g_mpTxReqSetWriteCalls.fetch_add(1, std::memory_order_relaxed);
     g_mpLastTxReqSetWrite.store(value, std::memory_order_relaxed);
     g_mpLastTxReqSetWriteCpu.store(cpu, std::memory_order_relaxed);
@@ -299,6 +303,8 @@ extern "C" void melondsds_record_mp_tx_req_set_write(int32_t value,
     g_mpLastTxReqSetSlotCmd.store(txSlotCmd, std::memory_order_relaxed);
     g_mpLastTxReqSetSlotLoc2.store(txSlotLoc2, std::memory_order_relaxed);
     g_mpLastTxReqSetSlotLoc3.store(txSlotLoc3, std::memory_order_relaxed);
+    g_mpLastTxReqSetTxBufWriteAddr.store(txBufWriteAddr, std::memory_order_relaxed);
+    g_mpLastTxReqSetTxBufCount.store(txBufCount, std::memory_order_relaxed);
 }
 
 extern "C" void melondsds_record_mp_tx_slot_write(int32_t addr,
@@ -454,6 +460,8 @@ static void resetMpDiagnostics() {
     g_mpLastTxReqSetSlotCmd.store(0, std::memory_order_relaxed);
     g_mpLastTxReqSetSlotLoc2.store(0, std::memory_order_relaxed);
     g_mpLastTxReqSetSlotLoc3.store(0, std::memory_order_relaxed);
+    g_mpLastTxReqSetTxBufWriteAddr.store(0, std::memory_order_relaxed);
+    g_mpLastTxReqSetTxBufCount.store(0, std::memory_order_relaxed);
     g_mpTxSlotWriteCalls.store(0, std::memory_order_relaxed);
     g_mpLastTxSlotWriteAddr.store(0, std::memory_order_relaxed);
     g_mpLastTxSlotWriteValue.store(0, std::memory_order_relaxed);
@@ -755,6 +763,8 @@ extern "C" PUBLIC_SYMBOL void melondsds_get_mp_diagnostics(int32_t *beginCalls,
                                                             int32_t *lastTxReqSetSlotCmd,
                                                             int32_t *lastTxReqSetSlotLoc2,
                                                             int32_t *lastTxReqSetSlotLoc3,
+                                                            int32_t *lastTxReqSetTxBufWriteAddr,
+                                                            int32_t *lastTxReqSetTxBufCount,
                                                             int32_t *txSlotWriteCalls,
                                                             int32_t *lastTxSlotWriteAddr,
                                                             int32_t *lastTxSlotWriteValue,
@@ -806,6 +816,12 @@ extern "C" PUBLIC_SYMBOL void melondsds_get_mp_diagnostics(int32_t *beginCalls,
     if (lastTxReqSetSlotCmd) *lastTxReqSetSlotCmd = g_mpLastTxReqSetSlotCmd.load(std::memory_order_relaxed);
     if (lastTxReqSetSlotLoc2) *lastTxReqSetSlotLoc2 = g_mpLastTxReqSetSlotLoc2.load(std::memory_order_relaxed);
     if (lastTxReqSetSlotLoc3) *lastTxReqSetSlotLoc3 = g_mpLastTxReqSetSlotLoc3.load(std::memory_order_relaxed);
+    if (lastTxReqSetTxBufWriteAddr) {
+        *lastTxReqSetTxBufWriteAddr = g_mpLastTxReqSetTxBufWriteAddr.load(std::memory_order_relaxed);
+    }
+    if (lastTxReqSetTxBufCount) {
+        *lastTxReqSetTxBufCount = g_mpLastTxReqSetTxBufCount.load(std::memory_order_relaxed);
+    }
     if (txSlotWriteCalls) *txSlotWriteCalls = g_mpTxSlotWriteCalls.load(std::memory_order_relaxed);
     if (lastTxSlotWriteAddr) *lastTxSlotWriteAddr = g_mpLastTxSlotWriteAddr.load(std::memory_order_relaxed);
     if (lastTxSlotWriteValue) *lastTxSlotWriteValue = g_mpLastTxSlotWriteValue.load(std::memory_order_relaxed);
