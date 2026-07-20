@@ -23,6 +23,7 @@
 namespace MelonDsDs {
 // timestamp, aid, and isReply, respectively.
 constexpr size_t HeaderSize = sizeof(uint64_t) + sizeof(uint8_t) + sizeof(uint8_t);
+constexpr size_t MaxPacketPayloadSize = 2048;
 
 class Packet {
 public:
@@ -30,8 +31,7 @@ public:
         Reply, Cmd, Other
     };
 
-    static Packet parsePk(const void *buf, uint64_t len);
-    explicit Packet(const void *data, uint64_t len, uint64_t timestamp, uint8_t aid, Packet::Type type);
+    explicit Packet(const void *data, size_t len, uint64_t timestamp, uint8_t aid, Packet::Type type);
 
     [[nodiscard]] uint64_t Timestamp() const noexcept {
         return _timestamp;
@@ -45,7 +45,7 @@ public:
     [[nodiscard]] const void *Data() const noexcept {
         return _data.data();
     };
-    [[nodiscard]] uint64_t Length() const noexcept {
+    [[nodiscard]] size_t Length() const noexcept {
         return _data.size();
     };
 
@@ -56,6 +56,8 @@ private:
     Packet::Type _type;
     std::vector<uint8_t> _data;
 };
+
+std::optional<Packet> ParsePacket(const void *buf, size_t len);
 
 class MpState {
 public:
