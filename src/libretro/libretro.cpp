@@ -1134,7 +1134,7 @@ u16 Platform::MP_RecvReplies(u8* packets, u64 timestamp, u16 aidmask, void*) {
             continue;
         }
         ret |= 1<<p.Aid();
-        memcpy(&packets[(p.Aid()-1)*1024], p.Data(), std::min(p.Length(), (uint64_t)1024));
+        memcpy(&packets[(p.Aid()-1)*1024], p.Data(), std::min(p.Length(), static_cast<size_t>(1024)));
         loops++;
     }
     return ret;
