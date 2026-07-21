@@ -21,6 +21,22 @@ on:
       - "*.github/FUNDING.yml"
       - "*.github/workflows/**"
 jobs:
+  native-packet-test:
+    name: Native Packet Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+          persist-credentials: false
+      - name: Configure native packet test
+        run: cmake -S test/native -B build/native -DCMAKE_BUILD_TYPE=Release
+      - name: Build native packet test
+        run: cmake --build build/native --parallel
+      - name: Run native packet test
+        run: ctest --test-dir build/native --output-on-failure
+
   check-testfile-secrets:
     name: Check Test File Secrets
     if: github.event_name != 'pull_request_target'

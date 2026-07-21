@@ -1,5 +1,7 @@
 option(MELONDSDS_INTERNAL_VENV "Use an internal Python virtual environment for the test suite; disable if using your own." ON)
 
+add_subdirectory(native)
+
 find_package(Python3 3.11 REQUIRED)
 
 if (MELONDSDS_INTERNAL_VENV)
