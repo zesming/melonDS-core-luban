@@ -41,6 +41,17 @@ void MpState::SetPollFn(retro_netpacket_poll_receive_t pollFn) noexcept {
     _pollFn = pollFn;
 }
 
+void MpState::Reset() noexcept {
+    _sendFn = nullptr;
+    _pollFn = nullptr;
+    _hostId.reset();
+    _warnedHighLatency = false;
+    _timeoutCount = 0;
+    while (!receivedPackets.empty()) {
+        receivedPackets.pop();
+    }
+}
+
 void MpState::PacketReceived(const void *buf, size_t len, uint16_t client_id) noexcept {
     retro_assert(IsReady());
     try {

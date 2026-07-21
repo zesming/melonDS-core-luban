@@ -14,3 +14,20 @@ target_include_directories(melondsds_packet_test PRIVATE
 )
 
 add_test(NAME melondsds_packet_test COMMAND melondsds_packet_test)
+
+add_executable(melondsds_mp_state_test
+    mp_state_test.cpp
+    ../../src/libretro/net/mp.cpp
+    ../../src/libretro/net/packet.cpp
+)
+target_compile_features(melondsds_mp_state_test PRIVATE cxx_std_17)
+target_include_directories(melondsds_mp_state_test PRIVATE
+    ../../src/libretro
+    ../../src/libretro/net
+    ../../third_party/date/include
+    ../../third_party/fmt/include
+    ../../third_party/glm
+    ../../third_party/libretro-common/include
+)
+
+add_test(NAME melondsds_mp_state_test COMMAND melondsds_mp_state_test)

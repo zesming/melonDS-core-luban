@@ -64,6 +64,7 @@ public:
     void PacketReceived(const void *buf, size_t len, uint16_t client_id) noexcept;
     void SetSendFn(retro_netpacket_send_t sendFn) noexcept;
     void SetPollFn(retro_netpacket_poll_receive_t pollFn) noexcept;
+    void Reset() noexcept;
     bool IsReady() const noexcept;
     void SendPacket(const Packet &p) noexcept;
     std::optional<Packet> NextPacket() noexcept;
@@ -71,8 +72,8 @@ public:
 private:
     bool _warnedHighLatency = false;
     int _timeoutCount = 0;
-    retro_netpacket_send_t _sendFn;
-    retro_netpacket_poll_receive_t _pollFn;
+    retro_netpacket_send_t _sendFn = nullptr;
+    retro_netpacket_poll_receive_t _pollFn = nullptr;
     std::optional<uint16_t> _hostId;
     std::queue<Packet> receivedPackets;
 };

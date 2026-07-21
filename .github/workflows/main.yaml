@@ -22,7 +22,7 @@ on:
       - "*.github/workflows/**"
 jobs:
   native-packet-test:
-    name: Native Packet Test
+    name: Native Netplay Tests
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -30,13 +30,18 @@ jobs:
         with:
           submodules: false
           persist-credentials: false
-      - name: Fetch libretro headers
-        run: git submodule update --init --depth 1 third_party/libretro-common
-      - name: Configure native packet test
+      - name: Fetch native test dependencies
+        run: |
+          git submodule update --init --depth 1 \
+            third_party/date \
+            third_party/fmt \
+            third_party/glm \
+            third_party/libretro-common
+      - name: Configure native netplay tests
         run: cmake -S test/native -B build/native -DCMAKE_BUILD_TYPE=Release
-      - name: Build native packet test
+      - name: Build native netplay tests
         run: cmake --build build/native --parallel
-      - name: Run native packet test
+      - name: Run native netplay tests
         run: ctest --test-dir build/native --output-on-failure
 
   check-testfile-secrets:

@@ -53,8 +53,7 @@ void MelonDsDs::CoreState::MpPacketReceived(const void *buf, size_t len, uint16_
 
 void MelonDsDs::CoreState::MpStopped() noexcept {
     ZoneScopedN(TracyFunction);
-    _mpState.SetSendFn(nullptr);
-    _mpState.SetPollFn(nullptr);
+    _mpState.Reset();
     retro::clear_fastforwarding_override();
     retro::info("Stopping multiplayer on libretro side");
 }
