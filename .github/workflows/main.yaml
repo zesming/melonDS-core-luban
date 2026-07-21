@@ -30,6 +30,8 @@ jobs:
         with:
           submodules: false
           persist-credentials: false
+      - name: Fetch libretro headers
+        run: git submodule update --init --depth 1 third_party/libretro-common
       - name: Configure native packet test
         run: cmake -S test/native -B build/native -DCMAKE_BUILD_TYPE=Release
       - name: Build native packet test
