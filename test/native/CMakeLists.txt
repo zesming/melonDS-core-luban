@@ -35,14 +35,25 @@ target_include_directories(melondsds_mp_state_test PRIVATE
 
 add_test(NAME melondsds_mp_state_test COMMAND melondsds_mp_state_test)
 
-add_executable(melondsds_nds_wireless_runtime_test
-    nds_wireless_runtime_test.cpp
-    ../../../../frontend/nds_wireless_runtime.cpp
-)
-target_compile_features(melondsds_nds_wireless_runtime_test PRIVATE cxx_std_17)
-target_compile_definitions(melondsds_nds_wireless_runtime_test PRIVATE LUBAN_NDS_WIRELESS_NATIVE_TEST)
-target_include_directories(melondsds_nds_wireless_runtime_test PRIVATE
-    ../../../../frontend
-)
+get_filename_component(LUBAN_NATIVE_CPP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../.." ABSOLUTE)
+get_filename_component(MELONDS_CORE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../.." REALPATH)
+get_filename_component(LUBAN_MELONDS_CORE_DIR "${LUBAN_NATIVE_CPP_DIR}/cores/melonds" REALPATH)
+set(LUBAN_NDS_WIRELESS_RUNTIME_DIR "${LUBAN_NATIVE_CPP_DIR}/frontend")
+set(LUBAN_NDS_WIRELESS_RUNTIME_SOURCE "${LUBAN_NDS_WIRELESS_RUNTIME_DIR}/nds_wireless_runtime.cpp")
+set(LUBAN_NDS_WIRELESS_RUNTIME_HEADER "${LUBAN_NDS_WIRELESS_RUNTIME_DIR}/nds_wireless_runtime.h")
 
-add_test(NAME melondsds_nds_wireless_runtime_test COMMAND melondsds_nds_wireless_runtime_test)
+if (MELONDS_CORE_DIR STREQUAL LUBAN_MELONDS_CORE_DIR AND
+    EXISTS "${LUBAN_NDS_WIRELESS_RUNTIME_SOURCE}" AND
+    EXISTS "${LUBAN_NDS_WIRELESS_RUNTIME_HEADER}")
+    add_executable(melondsds_nds_wireless_runtime_test
+        nds_wireless_runtime_test.cpp
+        "${LUBAN_NDS_WIRELESS_RUNTIME_SOURCE}"
+    )
+    target_compile_features(melondsds_nds_wireless_runtime_test PRIVATE cxx_std_17)
+    target_compile_definitions(melondsds_nds_wireless_runtime_test PRIVATE LUBAN_NDS_WIRELESS_NATIVE_TEST)
+    target_include_directories(melondsds_nds_wireless_runtime_test PRIVATE
+        "${LUBAN_NDS_WIRELESS_RUNTIME_DIR}"
+    )
+
+    add_test(NAME melondsds_nds_wireless_runtime_test COMMAND melondsds_nds_wireless_runtime_test)
+endif()

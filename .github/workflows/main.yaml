@@ -36,7 +36,8 @@ jobs:
             third_party/date \
             third_party/fmt \
             third_party/glm \
-            third_party/libretro-common
+            third_party/libretro-common \
+            third_party/melonDS
       - name: Configure native netplay tests
         run: cmake -S test/native -B build/native -DCMAKE_BUILD_TYPE=Release
       - name: Build native netplay tests
