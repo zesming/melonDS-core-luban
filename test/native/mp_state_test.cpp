@@ -1,5 +1,6 @@
 #include "mp.hpp"
 #include "environment.hpp"
+#include "Wifi.h"
 
 #include <algorithm>
 #include <array>
@@ -28,6 +29,7 @@ MpState *hostState = nullptr;
 MpState *clientState = nullptr;
 uint16_t lastHostDestination = RETRO_NETPACKET_BROADCAST;
 uint16_t lastClientDestination = RETRO_NETPACKET_BROADCAST;
+int lastClientFlags = 0;
 
 void Require(bool condition, const char *message) {
     if (!condition) {
@@ -53,7 +55,8 @@ void ClientSend(int, const void *data, size_t length, uint16_t clientId) {
     }
 }
 
-void CaptureClientSend(int, const void *, size_t, uint16_t clientId) {
+void CaptureClientSend(int flags, const void *, size_t, uint16_t clientId) {
+    lastClientFlags = flags;
     lastClientDestination = clientId;
 }
 
@@ -148,11 +151,79 @@ void TestSessionRestartDropsQueuedPackets() {
 
     Stop(client);
 }
+
+void TestPacketSendUsesProductFlags() {
+    MpState client;
+    Configure(client, CaptureClientSend);
+
+    const std::array<uint8_t, 1> payload {0x77};
+    lastClientFlags = 0;
+    client.SendPacket(Packet(payload.data(), payload.size(), 302, 0, Packet::Type::Other));
+    Require(lastClientFlags == (RETRO_NETPACKET_UNSEQUENCED | RETRO_NETPACKET_UNRELIABLE |
+                                RETRO_NETPACKET_FLUSH_HINT),
+            "MP packet did not use the product netpacket flags");
+
+    Stop(client);
+}
+
+void TestQueueLimitDropsNewestPacket() {
+    MpState state;
+    Configure(state, CaptureClientSend);
+
+    for (size_t index = 0; index < MelonDsDs::MaxQueuedPackets + 1; ++index) {
+        const uint8_t payload = static_cast<uint8_t>(index);
+        const Packet packet(&payload, 1, index, 0, Packet::Type::Other);
+        const std::vector<uint8_t> encoded = packet.ToBuf();
+        state.PacketReceived(encoded.data(), encoded.size(), 7);
+    }
+
+    Require(state.QueuedPacketCountForTest() == MelonDsDs::MaxQueuedPackets,
+            "MP queue exceeded its hard packet limit");
+    for (size_t index = 0; index < MelonDsDs::MaxQueuedPackets; ++index) {
+        const std::optional<Packet> packet = state.NextPacket();
+        Require(packet.has_value(), "MP queue dropped an earlier packet");
+        if (packet.has_value()) {
+            Require(packet->Timestamp() == index, "MP queue did not deterministically drop the newest packet");
+        }
+    }
+    Require(!state.NextPacket().has_value(), "MP queue retained a packet over the hard limit");
+    Stop(state);
+}
+
+void TestOversizedPacketStopsBeforeWifiWepMove() {
+    MpState state;
+    Configure(state, CaptureClientSend);
+
+    std::vector<uint8_t> payload(MelonDsDs::MaxPacketPayloadSize, 0);
+    // 编码负载只容纳 2036-byte frame；声明再加一必须在 Wifi::RXBuffer 边界前被拒绝。
+    const uint16_t declaredFrameLength = static_cast<uint16_t>(payload.size() - MelonDsDs::HeaderSize - 1);
+    payload[10] = static_cast<uint8_t>(declaredFrameLength);
+    payload[11] = static_cast<uint8_t>(declaredFrameLength >> 8);
+    payload[12] = 0;
+    payload[13] = 0x40; // WEP frame-control bit
+    const Packet oversized(payload.data(), payload.size(), 400, 0, Packet::Type::Other);
+    const std::vector<uint8_t> encoded = oversized.ToBuf();
+
+    state.PacketReceived(encoded.data(), encoded.size(), 7);
+    const std::optional<Packet> received = state.NextPacket();
+    Require(received.has_value(), "oversized packet did not traverse ParsePacket to MpState");
+    if (received.has_value()) {
+        const auto *frame = static_cast<const uint8_t *>(received->Data());
+        const uint16_t frameLength = static_cast<uint16_t>(frame[10] | (frame[11] << 8));
+        const bool isWep = (frame[13] & 0x40) != 0;
+        Require(!melonDS::Wifi::ValidateReceivePacket(frameLength, melonDS::WifiRxBufferBytes, isWep),
+                "oversized WEP packet reached Wifi receive move without rejection");
+    }
+    Stop(state);
+}
 }
 
 int main() {
     TestCommandReplyExchange();
     TestSessionRestartClearsPeerRouting();
     TestSessionRestartDropsQueuedPackets();
+    TestPacketSendUsesProductFlags();
+    TestQueueLimitDropsNewestPacket();
+    TestOversizedPacketStopsBeforeWifiWepMove();
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

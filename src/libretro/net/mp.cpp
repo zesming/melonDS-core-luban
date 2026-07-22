@@ -59,6 +59,11 @@ void MpState::PacketReceived(const void *buf, size_t len, uint16_t client_id) no
         if (!packet.has_value()) {
             return;
         }
+        // 异常高频输入时保留已排队的较早帧并丢弃新帧，
+        // 让单帧 pump 的内存上限固定为 64 * 2048 bytes，且过量输入不会挤掉已验证帧。
+        if (receivedPackets.size() >= MaxQueuedPackets) {
+            return;
+        }
         if(packet->PacketType() == Packet::Type::Cmd) {
             _hostId = client_id;
             //retro::debug("Host client id is {}", client_id);
@@ -68,6 +73,12 @@ void MpState::PacketReceived(const void *buf, size_t len, uint16_t client_id) no
         return;
     }
 }
+
+#if defined(LUBAN_NDS_WIRELESS_NATIVE_TEST)
+size_t MpState::QueuedPacketCountForTest() const noexcept {
+    return receivedPackets.size();
+}
+#endif
 
 std::optional<Packet> MpState::NextPacket() noexcept {
     retro_assert(IsReady());
@@ -118,5 +129,3 @@ void MpState::SendPacket(const Packet &p) noexcept {
     }
     _sendFn(RETRO_NETPACKET_UNSEQUENCED | RETRO_NETPACKET_UNRELIABLE | RETRO_NETPACKET_FLUSH_HINT, p.ToBuf().data(), p.Length() + HeaderSize, dest);
 }
-
-

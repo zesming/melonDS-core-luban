@@ -23,7 +23,10 @@
 namespace MelonDsDs {
 // timestamp, aid, and isReply, respectively.
 constexpr size_t HeaderSize = sizeof(uint64_t) + sizeof(uint8_t) + sizeof(uint8_t);
+// Platform::MP_RecvPacket() copies the decoded payload into Wifi::RXBuffer[2048].
+// Keep the codec's wire maximum tied to that consumer rather than UDP's 64 KiB datagram limit.
 constexpr size_t MaxPacketPayloadSize = 2048;
+constexpr size_t MaxQueuedPackets = 64;
 
 class Packet {
 public:
@@ -69,6 +72,9 @@ public:
     void SendPacket(const Packet &p) noexcept;
     std::optional<Packet> NextPacket() noexcept;
     std::optional<Packet> NextPacketBlock() noexcept;
+#if defined(LUBAN_NDS_WIRELESS_NATIVE_TEST)
+    [[nodiscard]] size_t QueuedPacketCountForTest() const noexcept;
+#endif
 private:
     bool _warnedHighLatency = false;
     int _timeoutCount = 0;

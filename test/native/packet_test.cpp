@@ -1,4 +1,5 @@
 #include "mp.hpp"
+#include "Wifi.h"
 
 #include <algorithm>
 #include <array>
@@ -100,6 +101,12 @@ void TestInvalidInput() {
     Require(!ParsePacket(header.data(), header.size()).has_value(), "reply aid 16 was accepted");
     header[8] = 255;
     Require(!ParsePacket(header.data(), header.size()).has_value(), "reply aid 255 was accepted");
+
+    header[9] = 0;
+    header[8] = 1;
+    Require(!ParsePacket(header.data(), header.size()).has_value(), "other aid 1 was accepted");
+    header[9] = 2;
+    Require(!ParsePacket(header.data(), header.size()).has_value(), "command aid 1 was accepted");
 }
 
 void TestPayloadLimit() {
@@ -113,6 +120,37 @@ void TestPayloadLimit() {
     maximum.push_back(0);
     Require(!ParsePacket(maximum.data(), maximum.size()).has_value(), "oversized payload was accepted");
 }
+
+void TestWifiReceiveBounds() {
+    constexpr size_t kLargestNormalFrame = melonDS::WifiRxBufferBytes - melonDS::WifiRxMetadataBytes;
+    // WEP source begins four bytes later, but its payload is four bytes shorter: the same raw
+    // receive-buffer ceiling remains valid when checked from the actual move offsets.
+    constexpr size_t kLargestWepFrame = kLargestNormalFrame;
+    Require(melonDS::Wifi::ValidateReceivePacket(kLargestNormalFrame, melonDS::WifiRxBufferBytes, false),
+            "largest normal Wifi frame was rejected");
+    Require(!melonDS::Wifi::ValidateReceivePacket(kLargestNormalFrame + 1, melonDS::WifiRxBufferBytes, false),
+            "oversized normal Wifi frame was accepted");
+    Require(melonDS::Wifi::ValidateReceivePacket(kLargestWepFrame, melonDS::WifiRxBufferBytes, true),
+            "largest WEP Wifi frame was rejected");
+    Require(!melonDS::Wifi::ValidateReceivePacket(kLargestWepFrame + 1, melonDS::WifiRxBufferBytes, true),
+            "WEP memmove source overrun frame was accepted");
+
+    std::array<uint8_t, melonDS::WifiRxBufferBytes> frame{};
+    for (size_t index = 0; index < kLargestWepFrame; ++index) {
+        frame[melonDS::WifiRxMetadataBytes + index] = static_cast<uint8_t>(index);
+    }
+    size_t movedLength = 0;
+    Require(melonDS::WifiMoveWepPayload(frame.data(), frame.size(), kLargestWepFrame, 0, &movedLength),
+            "valid WEP frame did not execute its receive move");
+    Require(movedLength == kLargestWepFrame - melonDS::WifiWepHeaderBytes,
+            "WEP move did not remove exactly its WEP header");
+    Require(frame[melonDS::WifiRxMetadataBytes + melonDS::WifiMinMacFrameBytes] ==
+              static_cast<uint8_t>(melonDS::WifiMinMacFrameBytes + melonDS::WifiWepHeaderBytes),
+            "WEP move did not preserve the 24-byte MAC header boundary");
+    Require(!melonDS::WifiMoveWepPayload(frame.data(), frame.size(), kLargestWepFrame,
+              kLargestWepFrame - melonDS::WifiMinMacFrameBytes - melonDS::WifiWepHeaderBytes + 1, &movedLength),
+            "cropped WEP frame below its 24-byte header boundary was moved");
+}
 }
 
 int main() {
@@ -123,5 +161,6 @@ int main() {
     TestUnalignedInput();
     TestInvalidInput();
     TestPayloadLimit();
+    TestWifiReceiveBounds();
     return EXIT_SUCCESS;
 }

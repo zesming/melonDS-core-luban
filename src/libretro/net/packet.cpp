@@ -35,18 +35,25 @@ std::optional<Packet> MelonDsDs::ParsePacket(const void *buf, size_t len) {
     uint64_t netTimestamp = 0;
     std::memcpy(&netTimestamp, bytes, sizeof(netTimestamp));
 
+    const uint8_t aid = bytes[8];
     Packet::Type packetType;
     switch (bytes[9]) {
         case 0:
+            if (aid != 0) {
+                return std::nullopt;
+            }
             packetType = Packet::Type::Other;
             break;
         case 1:
-            if (bytes[8] == 0 || bytes[8] >= 16) {
+            if (aid == 0 || aid >= 16) {
                 return std::nullopt;
             }
             packetType = Packet::Type::Reply;
             break;
         case 2:
+            if (aid != 0) {
+                return std::nullopt;
+            }
             packetType = Packet::Type::Cmd;
             break;
         default:
@@ -57,7 +64,7 @@ std::optional<Packet> MelonDsDs::ParsePacket(const void *buf, size_t len) {
         bytes + HeaderSize,
         len - HeaderSize,
         SwapToNetwork(netTimestamp),
-        bytes[8],
+        aid,
         packetType);
 }
 
