@@ -1633,28 +1633,33 @@ void Wifi::MPClientReplyRX(int client)
     if (IOPORT(W_RXBufBegin) == IOPORT(W_RXBufEnd))
         return;
 
-    int framelen;
-    u8 txrate;
-
     u8* reply = &MPClientReplies[(client-1)*1024];
-    framelen = *(u16*)&reply[10];
+    const size_t rawFrameLength = *(u16*)&reply[10];
+    u16 framectl = *(u16*)&reply[12];
+    if (!Wifi::ValidateReceivePacket(rawFrameLength, 1024, false) ||
+        !Wifi::ValidateReceivePacket(rawFrameLength, sizeof(RXBuffer), (framectl & (1<<14)) != 0))
+    {
+        return;
+    }
 
-    txrate = reply[8];
+    // 先拷贝已验证的完整原始帧；后续 WEP memmove 的源和目的范围均由
+    // WifiReceiveFrameFits()（含额外 4-byte WEP 头）约束。
+    memcpy(RXBuffer, reply, WifiRxMetadataBytes + rawFrameLength);
+    int framelen = static_cast<int>(rawFrameLength);
+    const u8 txrate = reply[8];
 
     // TODO: what are the maximum crop values?
-    u16 framectl = *(u16*)&reply[12];
     if (framectl & (1<<14))
     {
-        framelen -= (IOPORT(W_RXLenCrop) >> 7) & 0x1FE;
-        if (framelen > 24) memmove(&RXBuffer[12+24], &RXBuffer[12+28], framelen);
+        size_t normalizedLength = 0;
+        if (!WifiMoveWepPayload(RXBuffer, sizeof(RXBuffer), rawFrameLength,
+                                (IOPORT(W_RXLenCrop) >> 7) & 0x1FE, &normalizedLength)) return;
+        framelen = static_cast<int>(normalizedLength);
     }
     else
         framelen -= (IOPORT(W_RXLenCrop) << 1) & 0x1FE;
 
     if (framelen < 0) framelen = 0;
-
-    // TODO rework RX system so we don't need this (by reading directly into MPClientReplies)
-    memcpy(RXBuffer, reply, 12+framelen);
 
     *(u16*)&RXBuffer[6] = txrate;
     *(u16*)&RXBuffer[8] = framelen;
@@ -1705,12 +1710,12 @@ bool Wifi::CheckRX(int type) // 0=regular 1=MP replies 2=MP host frames
         }
 
         if (rxlen <= 0) return false;
-        if (rxlen < 12+24) continue;
+        if (rxlen > static_cast<int>(sizeof(RXBuffer)) || rxlen < 12+24) continue;
 
-        framelen = *(u16*)&RXBuffer[10];
-        if (framelen != rxlen-12)
+        const size_t rawFrameLength = *(u16*)&RXBuffer[10];
+        if (rawFrameLength != static_cast<size_t>(rxlen - 12))
         {
-            Log(LogLevel::Error, "bad frame length %d/%d\n", framelen, rxlen-12);
+            Log(LogLevel::Error, "bad frame length %zu/%d\n", rawFrameLength, rxlen-12);
             continue;
         }
 
@@ -1733,13 +1738,21 @@ bool Wifi::CheckRX(int type) // 0=regular 1=MP replies 2=MP host frames
         }
 
         framectl = *(u16*)&RXBuffer[12+0];
+        if (!Wifi::ValidateReceivePacket(rawFrameLength, sizeof(RXBuffer), (framectl & (1<<14)) != 0))
+        {
+            Log(LogLevel::Error, "unsafe frame length %zu\n", rawFrameLength);
+            continue;
+        }
+        framelen = static_cast<int>(rawFrameLength);
         txrate = RXBuffer[8];
 
         // TODO: what are the maximum crop values?
         if (framectl & (1<<14))
         {
-            framelen -= (IOPORT(W_RXLenCrop) >> 7) & 0x1FE;
-            if (framelen > 24) memmove(&RXBuffer[12+24], &RXBuffer[12+28], framelen);
+            size_t normalizedLength = 0;
+            if (!WifiMoveWepPayload(RXBuffer, sizeof(RXBuffer), rawFrameLength,
+                                    (IOPORT(W_RXLenCrop) >> 7) & 0x1FE, &normalizedLength)) continue;
+            framelen = static_cast<int>(normalizedLength);
         }
         else
             framelen -= (IOPORT(W_RXLenCrop) << 1) & 0x1FE;

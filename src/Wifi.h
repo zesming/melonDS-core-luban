@@ -19,15 +19,61 @@
 #ifndef WIFI_H
 #define WIFI_H
 
+#include <cstddef>
+#include <cstring>
 #include "Savestate.h"
 
 namespace melonDS
 {
+constexpr size_t WifiRxBufferBytes = 2048;
+constexpr size_t WifiRxMetadataBytes = 12;
+constexpr size_t WifiMinMacFrameBytes = 24;
+constexpr size_t WifiWepHeaderBytes = 4;
+
+// WEP cropping removes the four-byte WEP header after the 24-byte MAC header.
+// Keep bounds expressed from the actual memmove source/destination offsets.
+inline bool WifiReceiveFrameFits(size_t frameLength, size_t bufferBytes, bool isWep)
+{
+    if (bufferBytes < WifiRxMetadataBytes + WifiMinMacFrameBytes ||
+        frameLength < WifiMinMacFrameBytes || frameLength > bufferBytes - WifiRxMetadataBytes) {
+        return false;
+    }
+    if (!isWep || frameLength < WifiMinMacFrameBytes + WifiWepHeaderBytes) return !isWep;
+    const size_t payloadBytes = frameLength - WifiMinMacFrameBytes - WifiWepHeaderBytes;
+    const size_t destinationOffset = WifiRxMetadataBytes + WifiMinMacFrameBytes;
+    const size_t sourceOffset = destinationOffset + WifiWepHeaderBytes;
+    return sourceOffset <= bufferBytes && destinationOffset <= bufferBytes &&
+           payloadBytes <= bufferBytes - sourceOffset && payloadBytes <= bufferBytes - destinationOffset;
+}
+
+inline bool WifiMoveWepPayload(u8 *buffer, size_t bufferBytes, size_t rawFrameLength, size_t cropBytes,
+                               size_t *outFrameLength)
+{
+    if (!buffer || !outFrameLength || !WifiReceiveFrameFits(rawFrameLength, bufferBytes, true) ||
+        cropBytes > rawFrameLength) return false;
+    const size_t croppedLength = rawFrameLength - cropBytes;
+    if (croppedLength < WifiMinMacFrameBytes + WifiWepHeaderBytes) return false;
+    const size_t destinationOffset = WifiRxMetadataBytes + WifiMinMacFrameBytes;
+    const size_t sourceOffset = destinationOffset + WifiWepHeaderBytes;
+    const size_t payloadBytes = croppedLength - WifiMinMacFrameBytes - WifiWepHeaderBytes;
+    if (payloadBytes > bufferBytes - sourceOffset || payloadBytes > bufferBytes - destinationOffset) return false;
+    std::memmove(buffer + destinationOffset, buffer + sourceOffset, payloadBytes);
+    *outFrameLength = croppedLength - WifiWepHeaderBytes;
+    return true;
+}
+
 class WifiAP;
 class NDS;
 class Wifi
 {
 public:
+
+    // CheckRX()/MPClientReplyRX() use this before every RXBuffer memcpy/memmove.
+    // Kept public so the native codec test can exercise the exact receive gate under ASan/UBSan.
+    static bool ValidateReceivePacket(size_t frameLength, size_t bufferBytes, bool isWep)
+    {
+        return WifiReceiveFrameFits(frameLength, bufferBytes, isWep);
+    }
 
     enum
     {
@@ -226,7 +272,7 @@ private:
     TXSlot TXSlots[6];
     u8 TXBuffer[0x2000];
 
-    u8 RXBuffer[2048];
+    u8 RXBuffer[WifiRxBufferBytes];
     u32 RXBufferPtr;
     int RXTime;
     u32 RXHalfwordTimeMask;
