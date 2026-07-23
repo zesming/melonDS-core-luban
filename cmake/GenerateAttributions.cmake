@@ -6,10 +6,15 @@ set(MELONDSDS_ATTRIBUTION_INPUTS
     "teakra|${melonDS_SOURCE_DIR}/src/teakra/LICENSE"
     "freebios|${melonDS_SOURCE_DIR}/freebios/drastic_bios_readme.txt"
     "blip-buf|${melonDS_SOURCE_DIR}/src/blip-buf/license.txt"
+    "libretro-common|${PROJECT_SOURCE_DIR}/cmake/libretro-common-LICENSE.txt"
     "fmt|${fmt_SOURCE_DIR}/LICENSE"
     "glm|${glm_SOURCE_DIR}/copying.txt"
     "pntr|${pntr_SOURCE_DIR}/LICENSE.md"
     "date|${date_SOURCE_DIR}/LICENSE.txt"
+    "open-sans|${PROJECT_SOURCE_DIR}/src/libretro/assets/OpenSans-LICENSE.txt"
+    "pcap-optional|${melonDS_SOURCE_DIR}/src/net/pcap/pcap.h"
+    "sha1|${melonDS_SOURCE_DIR}/src/sha1/sha1.c"
+    "xxhash|${melonDS_SOURCE_DIR}/src/xxhash/xxhash.h"
     "yamc|${yamc_SOURCE_DIR}/LICENSE"
     "span-lite|${span-lite_SOURCE_DIR}/LICENSE.txt"
     "tiny-aes-c|${melonDS_SOURCE_DIR}/src/tiny-AES-c/unlicense.txt"
@@ -50,6 +55,16 @@ function(melondsds_extract_prefix source_variable marker output)
     set("${output}" "${extraction}" PARENT_SCOPE)
 endfunction ()
 
+function(melondsds_extract_before source_variable marker output)
+    set(source "${${source_variable}}")
+    string(FIND "${source}" "${marker}" marker_index)
+    if (marker_index LESS 0)
+        message(FATAL_ERROR "Unable to extract attribution text before marker: ${marker}")
+    endif ()
+    string(SUBSTRING "${source}" 0 "${marker_index}" extraction)
+    set("${output}" "${extraction}" PARENT_SCOPE)
+endfunction ()
+
 file(READ "${PROJECT_SOURCE_DIR}/LICENSE" MELONDSDS_LICENSE)
 file(READ "${melonDS_SOURCE_DIR}/LICENSE" MELONDS_LICENSE)
 file(READ "${melonDS_SOURCE_DIR}/src/dolphin/license_dolphin.txt" DOLPHIN_LICENSE)
@@ -57,10 +72,18 @@ file(READ "${melonDS_SOURCE_DIR}/src/fatfs/LICENSE.txt" FATFS_LICENSE)
 file(READ "${melonDS_SOURCE_DIR}/src/teakra/LICENSE" TEAKRA_LICENSE)
 file(READ "${melonDS_SOURCE_DIR}/freebios/drastic_bios_readme.txt" FREEBIOS_LICENSE)
 file(READ "${melonDS_SOURCE_DIR}/src/blip-buf/license.txt" BLIP_BUF_LICENSE)
+file(READ "${PROJECT_SOURCE_DIR}/cmake/libretro-common-LICENSE.txt" LIBRETRO_COMMON_LICENSE)
 file(READ "${fmt_SOURCE_DIR}/LICENSE" FMT_LICENSE)
 file(READ "${glm_SOURCE_DIR}/copying.txt" GLM_LICENSE)
 file(READ "${pntr_SOURCE_DIR}/LICENSE.md" PNTR_LICENSE)
 file(READ "${date_SOURCE_DIR}/LICENSE.txt" DATE_LICENSE)
+file(READ "${PROJECT_SOURCE_DIR}/src/libretro/assets/OpenSans-LICENSE.txt" OPEN_SANS_LICENSE)
+file(READ "${melonDS_SOURCE_DIR}/src/net/pcap/pcap.h" PCAP_SOURCE)
+melondsds_extract_before(PCAP_SOURCE "\n#ifndef lib_pcap_pcap_h" PCAP_LICENSE)
+file(READ "${melonDS_SOURCE_DIR}/src/sha1/sha1.c" SHA1_SOURCE)
+melondsds_extract_before(SHA1_SOURCE "\n#include <stdio.h>" SHA1_LICENSE)
+file(READ "${melonDS_SOURCE_DIR}/src/xxhash/xxhash.h" XXHASH_SOURCE)
+melondsds_extract_prefix(XXHASH_SOURCE "*/" XXHASH_LICENSE)
 file(READ "${yamc_SOURCE_DIR}/LICENSE" YAMC_LICENSE)
 file(READ "${libretro-common_SOURCE_DIR}/encodings/encoding_base64.c" BASE64_SOURCE)
 melondsds_extract_prefix(BASE64_SOURCE "*/" BASE64_LICENSE_HEADER)
