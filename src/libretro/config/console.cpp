@@ -35,6 +35,7 @@
 #include <string/stdstring.h>
 
 #include "config.hpp"
+#include "bios_validation.hpp"
 #include "../constants.hpp"
 #include "environment.hpp"
 #include "exceptions.hpp"
@@ -917,6 +918,10 @@ static bool MelonDsDs::LoadBios(const string_view& name, BiosType type, std::spa
         }
 
         filestream_close(file);
+        if (!IsKnownNativeNdsBios(type, buffer)) {
+            retro::warn("Ignoring {} file \"{}\": CRC32 does not match a known native NDS BIOS", type, path);
+            return false;
+        }
         retro::info("Successfully loaded {}-byte {} file \"{}\"", buffer.size(), type, path);
 
         return true;

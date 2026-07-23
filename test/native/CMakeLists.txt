@@ -16,6 +16,19 @@ target_include_directories(melondsds_packet_test PRIVATE
 
 add_test(NAME melondsds_packet_test COMMAND melondsds_packet_test)
 
+add_executable(melondsds_bios_validation_test
+    bios_validation_test.cpp
+    ../../third_party/melonDS/src/CRC32.cpp
+)
+target_compile_features(melondsds_bios_validation_test PRIVATE cxx_std_17)
+target_include_directories(melondsds_bios_validation_test PRIVATE
+    ../../src/libretro/config
+    ../../third_party/melonDS/src
+    ../../third_party/span-lite/include
+)
+
+add_test(NAME melondsds_bios_validation_test COMMAND melondsds_bios_validation_test)
+
 add_executable(melondsds_mp_state_test
     mp_state_test.cpp
     ../../src/libretro/net/mp.cpp
