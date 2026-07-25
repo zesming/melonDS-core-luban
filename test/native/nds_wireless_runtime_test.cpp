@@ -480,17 +480,16 @@ void TestTransientSocketErrorsPreserveLastErrorUntilSuccess()
     const int errors[] = {EAGAIN, EWOULDBLOCK, ENOBUFS, EINTR};
     const std::vector<uint8_t> packet = ValidMpPacket();
     for (int error : errors) {
-        const uint16_t port = FindFreeLoopbackPort();
-        Require(port != 0, "could not allocate a loopback port");
-        if (port == 0) return;
         RuntimeTestIo io;
-        io.sendError = error;
         SetRuntimeTestHooks(&io);
         LubanNdsWirelessConfig config{};
         config.enabled = true;
-        config.port = port;
+        config.unicast = true;
+        config.port = 24567;
+        strcpy(config.peerHost, "127.0.0.1");
         lubanNdsWirelessConfigure(&config);
         Require(lubanNdsWirelessOpenSocket(), "socket did not open for transient send test");
+        io.sendCalls = 0;
         io.sendError = EIO;
         lubanNdsWirelessSendPacket(packet.data(), packet.size());
         LubanNdsWirelessRuntimeState state{};
@@ -514,6 +513,7 @@ void TestTransientSocketErrorsPreserveLastErrorUntilSuccess()
         SetRuntimeTestHooks(&io);
         lubanNdsWirelessConfigure(&config);
         Require(lubanNdsWirelessOpenSocket(), "socket did not open for transient receive test");
+        io.sendError = EAGAIN;
         io.receiveError = EIO;
         Require(!lubanNdsWirelessPollPackets(Receive, nullptr), "real receive error reported a packet");
         Require(lubanNdsWirelessGetRuntimeState(&state) && state.rxPackets == 0 && state.lastError[0] != '\0',
@@ -526,7 +526,7 @@ void TestTransientSocketErrorsPreserveLastErrorUntilSuccess()
         Require(state.rxPackets == 0 && std::string(state.lastError) == receiveError,
                 "transient receive error cleared the prior real error");
         io.receiveError = 0;
-        io.receiveQueue = {{Endpoint(INADDR_LOOPBACK, port), packet}};
+        io.receiveQueue = {{Endpoint(INADDR_LOOPBACK, config.port), packet}};
         ReceiveState received;
         Require(lubanNdsWirelessPollPackets(Receive, &received), "successful receive was not observed");
         Require(lubanNdsWirelessGetRuntimeState(&state) && io.receiveCalls == 4 && received.calls == 1 &&
