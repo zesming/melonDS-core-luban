@@ -8,6 +8,7 @@
 #include <netinet/in.h>
 #include <string>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <vector>
 
@@ -29,6 +30,21 @@ int OpenSender(uint32_t address = INADDR_LOOPBACK)
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(address);
+    if (bind(fd, reinterpret_cast<const sockaddr *>(&addr), sizeof(addr)) != 0) {
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+int OpenReceiver(uint16_t port)
+{
+    const int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) return -1;
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = htons(port);
     if (bind(fd, reinterpret_cast<const sockaddr *>(&addr), sizeof(addr)) != 0) {
         close(fd);
         return -1;
@@ -183,6 +199,236 @@ void TestConfiguredUnicastAndEmptyPacketRejection()
     lubanNdsWirelessStop();
 }
 
+void TestLoopbackHostClientExchangeAndRestart()
+{
+    const uint16_t port = FindFreeLoopbackPort();
+    Require(port != 0, "could not allocate a loopback port");
+    if (port == 0) return;
+
+    LubanNdsWirelessConfig hostConfig{};
+    hostConfig.enabled = true;
+    hostConfig.port = port;
+    lubanNdsWirelessConfigure(&hostConfig);
+    Require(lubanNdsWirelessOpenSocket(), "loopback host socket did not open");
+
+    std::vector<uint8_t> waitingPacket = ValidMpPacket();
+    waitingPacket[0] = 0x31;
+    lubanNdsWirelessSendPacket(waitingPacket.data(), waitingPacket.size());
+    LubanNdsWirelessRuntimeState state{};
+    Require(lubanNdsWirelessGetRuntimeState(&state) && state.txPackets == 1,
+            "unlocked host did not broadcast while waiting for client registration");
+
+    const std::vector<uint8_t> clientPacket = [] {
+        std::vector<uint8_t> packet = ValidMpPacket();
+        packet[0] = 0x4c;
+        return packet;
+    }();
+    const std::vector<uint8_t> hostPacket = [] {
+        std::vector<uint8_t> packet = ValidMpPacket();
+        packet[0] = 0x7e;
+        return packet;
+    }();
+    const pid_t client = fork();
+    Require(client >= 0, "could not fork loopback client");
+    if (client == 0) {
+        LubanNdsWirelessConfig clientConfig{};
+        clientConfig.enabled = true;
+        clientConfig.unicast = true;
+        clientConfig.port = port;
+        std::strcpy(clientConfig.peerHost, "127.0.0.1");
+        lubanNdsWirelessConfigure(&clientConfig);
+        if (!lubanNdsWirelessOpenSocket()) _exit(2);
+        ReceiveState received;
+        for (size_t attempt = 0; attempt < 2000 && received.calls == 0; ++attempt) {
+            lubanNdsWirelessPollPackets(Receive, &received);
+            usleep(1000);
+        }
+        if (received.calls == 1 && received.packetIds[0] == hostPacket[0]) {
+            lubanNdsWirelessSendPacket(clientPacket.data(), clientPacket.size());
+        }
+        lubanNdsWirelessStop();
+        _exit(received.calls == 1 && received.packetIds[0] == hostPacket[0] ? 0 : 3);
+    }
+    if (client < 0) {
+        lubanNdsWirelessStop();
+        return;
+    }
+
+    ReceiveState received;
+    for (size_t attempt = 0; attempt < 1000; ++attempt) {
+        lubanNdsWirelessPollPackets(Receive, &received);
+        lubanNdsWirelessGetRuntimeState(&state);
+        if (state.lastPeer[0] != '\0') break;
+        usleep(1000);
+    }
+    Require(std::string(state.lastPeer) == "127.0.0.1",
+            "receive-first loopback client did not register with the host");
+    Require(received.calls == 0, "client registration was forwarded as an MP payload");
+
+    const int wrongPeer = OpenSender();
+    Require(wrongPeer >= 0, "could not open wrong-peer sender");
+    if (wrongPeer >= 0) {
+        std::vector<uint8_t> wrongPacket = ValidMpPacket();
+        wrongPacket[0] = 0x6d;
+        Require(SendTo(wrongPeer, port, wrongPacket), "wrong-peer packet was not sent");
+        for (size_t attempt = 0; attempt < 10; ++attempt) {
+            lubanNdsWirelessPollPackets(Receive, &received);
+            usleep(1000);
+        }
+        Require(received.calls == 0, "locked host accepted a packet from a different endpoint");
+        close(wrongPeer);
+    }
+
+    lubanNdsWirelessSendPacket(hostPacket.data(), hostPacket.size());
+    for (size_t attempt = 0; attempt < 1000 && received.calls == 0; ++attempt) {
+        lubanNdsWirelessPollPackets(Receive, &received);
+        usleep(1000);
+    }
+    Require(received.calls == 1 && received.packetIds[0] == clientPacket[0],
+            "host did not receive the client payload after receive-first registration");
+    int clientStatus = 0;
+    Require(waitpid(client, &clientStatus, 0) == client, "could not wait for loopback client");
+    Require(WIFEXITED(clientStatus) && WEXITSTATUS(clientStatus) == 0,
+            "loopback client did not receive the host payload");
+
+    lubanNdsWirelessStop();
+    const int releasedSocket = OpenReceiver(port);
+    Require(releasedSocket >= 0, "stop did not release the host UDP port");
+    if (releasedSocket >= 0) close(releasedSocket);
+
+    lubanNdsWirelessConfigure(&hostConfig);
+    Require(lubanNdsWirelessOpenSocket(), "host socket did not reopen after stop");
+    lubanNdsWirelessStop();
+}
+
+void TestClientAndHostRestartRecovery()
+{
+    const uint16_t port = FindFreeLoopbackPort();
+    Require(port != 0, "could not allocate a loopback port");
+    if (port == 0) return;
+
+    LubanNdsWirelessConfig hostConfig{};
+    hostConfig.enabled = true;
+    hostConfig.port = port;
+    lubanNdsWirelessConfigure(&hostConfig);
+    Require(lubanNdsWirelessOpenSocket(), "restart-recovery host socket did not open");
+
+    const std::vector<uint8_t> hostPackets[] = {
+        [] { auto packet = ValidMpPacket(); packet[0] = 0x71; return packet; }(),
+        [] { auto packet = ValidMpPacket(); packet[0] = 0x72; return packet; }(),
+        [] { auto packet = ValidMpPacket(); packet[0] = 0x73; return packet; }(),
+    };
+    const std::vector<uint8_t> clientPackets[] = {
+        [] { auto packet = ValidMpPacket(); packet[0] = 0x41; return packet; }(),
+        [] { auto packet = ValidMpPacket(); packet[0] = 0x42; return packet; }(),
+        [] { auto packet = ValidMpPacket(); packet[0] = 0x43; return packet; }(),
+    };
+    int phasePipe[2] = {};
+    const int pipeResult = pipe(phasePipe);
+    Require(pipeResult == 0, "could not create restart-recovery phase pipe");
+    if (pipeResult != 0) {
+        lubanNdsWirelessStop();
+        return;
+    }
+
+    const pid_t client = fork();
+    Require(client >= 0, "could not fork restart-recovery client");
+    if (client == 0) {
+        close(phasePipe[0]);
+        LubanNdsWirelessConfig clientConfig{};
+        clientConfig.enabled = true;
+        clientConfig.unicast = true;
+        clientConfig.port = port;
+        std::strcpy(clientConfig.peerHost, "127.0.0.1");
+        auto exchange = [&](const std::vector<uint8_t> &hostPacket, const std::vector<uint8_t> &clientPacket) {
+            ReceiveState received;
+            for (size_t attempt = 0; attempt < 2000 && received.calls == 0; ++attempt) {
+                lubanNdsWirelessPollPackets(Receive, &received);
+                usleep(1000);
+            }
+            if (received.calls != 1 || received.packetIds[0] != hostPacket[0]) return false;
+            lubanNdsWirelessSendPacket(clientPacket.data(), clientPacket.size());
+            return true;
+        };
+        lubanNdsWirelessConfigure(&clientConfig);
+        if (!lubanNdsWirelessOpenSocket() || write(phasePipe[1], "A", 1) != 1 ||
+            !exchange(hostPackets[0], clientPackets[0])) {
+            _exit(2);
+        }
+        lubanNdsWirelessStop();
+        lubanNdsWirelessConfigure(&clientConfig);
+        if (!lubanNdsWirelessOpenSocket() || write(phasePipe[1], "B", 1) != 1 ||
+            !exchange(hostPackets[1], clientPackets[1]) || !exchange(hostPackets[2], clientPackets[2])) {
+            _exit(3);
+        }
+        lubanNdsWirelessStop();
+        close(phasePipe[1]);
+        _exit(0);
+    }
+    if (client < 0) {
+        close(phasePipe[0]);
+        close(phasePipe[1]);
+        lubanNdsWirelessStop();
+        return;
+    }
+    close(phasePipe[1]);
+
+    auto waitForPeer = [&] {
+        LubanNdsWirelessRuntimeState state{};
+        ReceiveState ignored;
+        for (size_t attempt = 0; attempt < 1000; ++attempt) {
+            lubanNdsWirelessPollPackets(Receive, &ignored);
+            lubanNdsWirelessGetRuntimeState(&state);
+            if (state.lastPeer[0] != '\0') return true;
+            usleep(1000);
+        }
+        return false;
+    };
+    ReceiveState received;
+    auto exchange = [&](size_t index) {
+        lubanNdsWirelessSendPacket(hostPackets[index].data(), hostPackets[index].size());
+        for (size_t attempt = 0; attempt < 1000 && received.calls <= index; ++attempt) {
+            lubanNdsWirelessPollPackets(Receive, &received);
+            usleep(1000);
+        }
+        return received.calls == index + 1 && received.packetIds[index] == clientPackets[index][0];
+    };
+
+    char phase = '\0';
+    Require(read(phasePipe[0], &phase, 1) == 1 && phase == 'A', "initial client did not open");
+    Require(waitForPeer(), "host did not receive initial client registration");
+    Require(exchange(0), "initial host-first exchange failed");
+
+    phase = '\0';
+    Require(read(phasePipe[0], &phase, 1) == 1 && phase == 'B', "restarted client did not open");
+    for (size_t attempt = 0; attempt < 500; ++attempt) {
+        lubanNdsWirelessPollPackets(Receive, &received);
+        usleep(1000);
+    }
+    const bool clientRestarted = exchange(1);
+    Require(clientRestarted, "host did not recover after client-only restart");
+    if (!clientRestarted) {
+        int clientStatus = 0;
+        waitpid(client, &clientStatus, 0);
+        close(phasePipe[0]);
+        lubanNdsWirelessStop();
+        return;
+    }
+
+    lubanNdsWirelessStop();
+    lubanNdsWirelessConfigure(&hostConfig);
+    Require(lubanNdsWirelessOpenSocket(), "host socket did not reopen during client-held restart");
+    Require(waitForPeer(), "reopened host did not recover from periodic client registration");
+    Require(exchange(2), "host-only restart did not recover the host-first exchange");
+
+    int clientStatus = 0;
+    Require(waitpid(client, &clientStatus, 0) == client, "could not wait for restart-recovery client");
+    Require(WIFEXITED(clientStatus) && WEXITSTATUS(clientStatus) == 0,
+            "restart-recovery client did not receive all host payloads");
+    close(phasePipe[0]);
+    lubanNdsWirelessStop();
+}
+
 void TestHostBroadcastsBeforeLockAndLocksValidPeer()
 {
     const uint16_t port = FindFreeLoopbackPort();
@@ -298,9 +544,13 @@ void TestLocalAddressCacheIgnoresSelfAndLocksRemotePeer()
     if (port == 0) return;
     RuntimeTestIo io;
     io.localAddresses = {htonl(INADDR_LOOPBACK)};
+    const uint16_t remotePort = static_cast<uint16_t>(port == 65535 ? 65534 : port + 1);
+    const sockaddr_in remote = Endpoint(INADDR_LOOPBACK + 1, remotePort);
     io.receiveQueue = {
         {Endpoint(INADDR_LOOPBACK, port), ValidMpPacket()},
-        {Endpoint(INADDR_LOOPBACK + 1, port), ValidMpPacket()},
+        {remote, ValidMpPacket()},
+        {Endpoint(INADDR_LOOPBACK + 2, remotePort), ValidMpPacket()},
+        {Endpoint(INADDR_LOOPBACK + 2, remotePort), {'L', 'U', 'B', 'A', 'N', '-', 'N', 'D', 'S', '1'}},
     };
     SetRuntimeTestHooks(&io);
 
@@ -319,12 +569,12 @@ void TestLocalAddressCacheIgnoresSelfAndLocksRemotePeer()
     ReceiveState received;
     Require(lubanNdsWirelessPollPackets(Receive, &received), "remote MP packet did not lock the host peer");
     Require(received.calls == 1 && io.enumerateCalls == 1,
-            "self packet was accepted or local IPv4 enumeration ran in the receive hot path");
+            "self packet, a second peer packet, or a different-IP registration was accepted, or local IPv4 enumeration ran in the receive hot path");
 
     lubanNdsWirelessSendPacket(packet.data(), packet.size());
-    Require(io.sendCalls == 2 && io.lastDestination.sin_addr.s_addr == htonl(INADDR_LOOPBACK + 1) &&
-                io.lastDestination.sin_port == htons(port),
-            "locked host did not unicast to the remote same-port MP peer");
+    Require(io.sendCalls == 2 && io.lastDestination.sin_addr.s_addr == remote.sin_addr.s_addr &&
+                io.lastDestination.sin_port == remote.sin_port,
+            "locked host did not unicast to the remote ephemeral-port MP peer");
 
     lubanNdsWirelessCloseSocket();
     io.localAddresses = {htonl(INADDR_LOOPBACK + 1)};
@@ -397,6 +647,8 @@ void TestPollPacketAndByteBudgets()
 int main()
 {
     TestConfiguredUnicastAndEmptyPacketRejection();
+    TestLoopbackHostClientExchangeAndRestart();
+    TestClientAndHostRestartRecovery();
     TestHostBroadcastsBeforeLockAndLocksValidPeer();
     TestTransientSocketErrorsPreserveLastErrorUntilSuccess();
     TestLocalAddressCacheIgnoresSelfAndLocksRemotePeer();
