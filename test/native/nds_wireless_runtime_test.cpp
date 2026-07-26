@@ -100,6 +100,7 @@ struct RuntimeTestIo {
     size_t enumerateCalls = 0;
     sockaddr_in lastDestination{};
     std::vector<uint32_t> localAddresses;
+    const char *productModel = nullptr;
     std::vector<FakeDatagram> receiveQueue;
     size_t nextDatagram = 0;
 };
@@ -146,12 +147,18 @@ size_t FakeEnumerateLocalIpv4(uint32_t *addresses, size_t capacity, void *opaque
     return count;
 }
 
+const char *FakeProductModel(void *opaque)
+{
+    return static_cast<RuntimeTestIo *>(opaque)->productModel;
+}
+
 void SetRuntimeTestHooks(RuntimeTestIo *io)
 {
     LubanNdsWirelessRuntimeTestHooks hooks{};
     hooks.sendTo = FakeSendTo;
     hooks.receiveFrom = FakeReceiveFrom;
     hooks.enumerateLocalIpv4 = FakeEnumerateLocalIpv4;
+    hooks.productModel = FakeProductModel;
     hooks.userData = io;
     lubanNdsWirelessSetRuntimeTestHooks(&hooks);
 }
@@ -475,6 +482,63 @@ void TestHostBroadcastsBeforeLockAndLocksValidPeer()
     lubanNdsWirelessStop();
 }
 
+void TestSourceFilterOutcomesAndConfigureReset()
+{
+    const uint16_t port = FindFreeLoopbackPort();
+    Require(port != 0, "could not allocate a source-filter test port");
+    if (port == 0) return;
+
+    RuntimeTestIo io;
+    io.localAddresses = {htonl(INADDR_LOOPBACK)};
+    const sockaddr_in remoteOne = Endpoint(INADDR_LOOPBACK + 1, port);
+    const sockaddr_in remoteTwo = Endpoint(INADDR_LOOPBACK + 2, port);
+    sockaddr_in nonInet = remoteOne;
+    nonInet.sin_family = AF_UNSPEC;
+    io.receiveQueue = {
+        {remoteOne, {0x00}},
+        {Endpoint(INADDR_LOOPBACK, port), ValidMpPacket()},
+        {remoteOne, ValidMpPacket()},
+        {remoteTwo, ValidMpPacket()},
+        {remoteTwo, {'L', 'U', 'B', 'A', 'N', '-', 'N', 'D', 'S', '1'}},
+    };
+    SetRuntimeTestHooks(&io);
+
+    LubanNdsWirelessConfig hostConfig{};
+    hostConfig.enabled = true;
+    hostConfig.port = port;
+    lubanNdsWirelessConfigure(&hostConfig);
+    Require(lubanNdsWirelessOpenSocket(), "host socket did not open for source-filter test");
+    ReceiveState received;
+    Require(lubanNdsWirelessPollPackets(Receive, &received), "valid initial remote MP packet was not delivered");
+    Require(received.calls == 1,
+            "invalid, local, locked-peer mismatch, or mismatched registration packet changed host source filtering");
+
+    io.receiveQueue = {{remoteTwo, ValidMpPacket()}};
+    io.nextDatagram = 0;
+    lubanNdsWirelessConfigure(&hostConfig);
+    Require(lubanNdsWirelessOpenSocket(), "host socket did not reopen after configure reset");
+    received = ReceiveState{};
+    Require(lubanNdsWirelessPollPackets(Receive, &received) && received.calls == 1,
+            "configure reset did not clear the locked host endpoint");
+
+    LubanNdsWirelessConfig clientConfig{};
+    clientConfig.enabled = true;
+    clientConfig.unicast = true;
+    clientConfig.port = port;
+    strcpy(clientConfig.peerHost, "127.0.0.1");
+    sockaddr_in mismatchedUnicast = Endpoint(INADDR_LOOPBACK, static_cast<uint16_t>(port == 65535 ? 65534 : port + 1));
+    io.receiveQueue = {{nonInet, ValidMpPacket()}, {mismatchedUnicast, ValidMpPacket()},
+                       {Endpoint(INADDR_LOOPBACK, port), ValidMpPacket()}};
+    io.nextDatagram = 0;
+    lubanNdsWirelessConfigure(&clientConfig);
+    Require(lubanNdsWirelessOpenSocket(), "unicast socket did not open for source-filter test");
+    received = ReceiveState{};
+    Require(lubanNdsWirelessPollPackets(Receive, &received) && received.calls == 1,
+            "non-AF_INET or mismatched unicast endpoint was accepted");
+    lubanNdsWirelessStop();
+    ClearRuntimeTestHooks();
+}
+
 void TestTransientSocketErrorsPreserveLastErrorUntilSuccess()
 {
     const int errors[] = {EAGAIN, EWOULDBLOCK, ENOBUFS, EINTR};
@@ -589,6 +653,89 @@ void TestLocalAddressCacheIgnoresSelfAndLocksRemotePeer()
     ClearRuntimeTestHooks();
 }
 
+void TestEmulatorRelayRoute()
+{
+    constexpr uint16_t kPort = 24764;
+    constexpr uint32_t kRelayAddress = 0x0A000202;
+    RuntimeTestIo io;
+    io.localAddresses = {htonl(INADDR_LOOPBACK)};
+    SetRuntimeTestHooks(&io);
+
+    LubanNdsWirelessConfig hostConfig{};
+    hostConfig.enabled = true;
+    hostConfig.port = kPort;
+    const std::vector<uint8_t> packet = ValidMpPacket();
+
+    io.productModel = "emulator";
+    lubanNdsWirelessConfigure(&hostConfig);
+    Require(lubanNdsWirelessOpenSocket(), "emulator host socket did not open");
+    lubanNdsWirelessSendPacket(packet.data(), packet.size());
+    Require(io.lastDestination.sin_addr.s_addr == htonl(kRelayAddress) &&
+                io.lastDestination.sin_port == htons(kPort),
+            "exact emulator host did not send its first MP packet to the relay");
+
+    const sockaddr_in relay = Endpoint(kRelayAddress, kPort);
+    io.receiveQueue = {{relay, {'L', 'U', 'B', 'A', 'N', '-', 'N', 'D', 'S', '1'}}};
+    io.nextDatagram = 0;
+    ReceiveState received;
+    Require(!lubanNdsWirelessPollPackets(Receive, &received) && received.calls == 0,
+            "relay registration was delivered to the host packet handler");
+    LubanNdsWirelessRuntimeState state{};
+    Require(lubanNdsWirelessGetRuntimeState(&state) && std::string(state.lastPeer) == "10.0.2.2",
+            "relay registration did not lock the host peer");
+    lubanNdsWirelessSendPacket(packet.data(), packet.size());
+    Require(io.lastDestination.sin_addr.s_addr == relay.sin_addr.s_addr &&
+                io.lastDestination.sin_port == relay.sin_port,
+            "locked host did not send subsequent MP packets to the relay");
+
+    lubanNdsWirelessCloseSocket();
+    io.productModel = nullptr;
+    io.sendCalls = 0;
+    lubanNdsWirelessSendPacket(packet.data(), packet.size());
+    Require(io.sendCalls == 1 && io.lastDestination.sin_addr.s_addr == htonl(INADDR_BROADCAST) &&
+                io.lastDestination.sin_port == htons(kPort),
+            "socket reopen retained the old emulator relay route");
+
+    const char *nonEmulatorModels[] = {nullptr, "", "Pura 70", "Emulator"};
+    for (const char *model : nonEmulatorModels) {
+        lubanNdsWirelessCloseSocket();
+        io.productModel = model;
+        io.sendCalls = 0;
+        lubanNdsWirelessConfigure(&hostConfig);
+        Require(lubanNdsWirelessOpenSocket(), "non-emulator host socket did not open");
+        lubanNdsWirelessSendPacket(packet.data(), packet.size());
+        Require(io.sendCalls == 1 && io.lastDestination.sin_addr.s_addr == htonl(INADDR_BROADCAST) &&
+                    io.lastDestination.sin_port == htons(kPort),
+                "non-exact emulator model did not preserve host broadcast routing");
+    }
+
+    LubanNdsWirelessConfig clientConfig{};
+    clientConfig.enabled = true;
+    clientConfig.unicast = true;
+    clientConfig.port = kPort;
+    strcpy(clientConfig.peerHost, "192.0.2.9");
+    io.productModel = "emulator";
+    io.sendCalls = 0;
+    lubanNdsWirelessConfigure(&clientConfig);
+    Require(lubanNdsWirelessOpenSocket(), "emulator client socket did not open");
+    const sockaddr_in configuredPeer = Endpoint(0xC0000209, kPort);
+    Require(io.sendCalls == 1 && io.lastDestination.sin_addr.s_addr == configuredPeer.sin_addr.s_addr &&
+                io.lastDestination.sin_port == configuredPeer.sin_port,
+            "client registration did not preserve the configured peer");
+    lubanNdsWirelessSendPacket(packet.data(), packet.size());
+    Require(io.lastDestination.sin_addr.s_addr == configuredPeer.sin_addr.s_addr &&
+                io.lastDestination.sin_port == configuredPeer.sin_port,
+            "client MP packet did not preserve the configured peer");
+    io.receiveQueue = {{configuredPeer, packet}};
+    io.nextDatagram = 0;
+    ReceiveState clientReceived;
+    Require(lubanNdsWirelessPollPackets(Receive, &clientReceived) && clientReceived.calls == 1,
+            "client did not preserve the configured peer for incoming MP packets");
+
+    lubanNdsWirelessStop();
+    ClearRuntimeTestHooks();
+}
+
 void TestPollPacketAndByteBudgets()
 {
     const uint16_t port = FindFreeLoopbackPort();
@@ -650,8 +797,10 @@ int main()
     TestLoopbackHostClientExchangeAndRestart();
     TestClientAndHostRestartRecovery();
     TestHostBroadcastsBeforeLockAndLocksValidPeer();
+    TestSourceFilterOutcomesAndConfigureReset();
     TestTransientSocketErrorsPreserveLastErrorUntilSuccess();
     TestLocalAddressCacheIgnoresSelfAndLocksRemotePeer();
+    TestEmulatorRelayRoute();
     TestPollPacketAndByteBudgets();
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

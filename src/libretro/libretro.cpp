@@ -77,6 +77,16 @@ std::atomic<int32_t> g_mpTxStartCalls{0};
 std::atomic<int32_t> g_mpTxFrameCalls{0};
 std::atomic<int32_t> g_mpRxCheckCalls{0};
 std::atomic<int32_t> g_mpClientSyncCalls{0};
+constexpr int32_t kMpRxDiagnosticOutcomeCount = 8;
+std::atomic<uint32_t> g_mpRxDiagnosticCounts[kMpRxDiagnosticOutcomeCount]{};
+std::atomic<int32_t> g_mpRxDiagnosticLastOutcome{0};
+std::atomic<int32_t> g_mpRxDiagnosticLastType{0};
+std::atomic<int32_t> g_mpRxDiagnosticLastRxLen{0};
+std::atomic<int32_t> g_mpRxDiagnosticLastRawFrameLength{0};
+std::atomic<int32_t> g_mpRxDiagnosticLastPacketChannel{0};
+std::atomic<int32_t> g_mpRxDiagnosticLastCurrentChannel{0};
+std::atomic<int32_t> g_mpRxDiagnosticLastFrameCtl{0};
+std::atomic<int32_t> g_mpRxDiagnosticLastLoggedTerminalOutcome{0};
 std::atomic<int32_t> g_mpChannelChangeCalls{0};
 std::atomic<int32_t> g_mpLastChannel{0};
 std::atomic<int32_t> g_mpFireTxCalls{0};
@@ -167,6 +177,23 @@ std::mutex g_mpWifiRegWriteTraceMutex;
 char g_mpWifiRegWriteTraceTail[256] = "";
 }
 
+static bool isPowerOfTwo(uint32_t value) {
+    return value != 0 && (value & (value - 1)) == 0;
+}
+
+static const char *mpRxDiagnosticOutcomeName(int32_t outcome) {
+    switch (outcome) {
+        case 1: return "packet_received";
+        case 2: return "length_out_of_range";
+        case 3: return "length_mismatch";
+        case 4: return "channel_mismatch";
+        case 5: return "mp_mac_filtered";
+        case 6: return "validation_failed";
+        case 7: return "start_rx";
+        default: return "unknown";
+    }
+}
+
 static void appendMpWifiRegWriteTrace(int32_t addr, int32_t value, int32_t cpu, int32_t pc) {
     char entry[32];
     std::snprintf(entry,
@@ -219,6 +246,43 @@ extern "C" void melondsds_record_mp_tx_frame_call(void) {
 
 extern "C" void melondsds_record_mp_rx_check_call(void) {
     g_mpRxCheckCalls.fetch_add(1, std::memory_order_relaxed);
+}
+
+extern "C" void melondsds_record_mp_rx_diagnostic(int32_t outcome,
+                                                   int32_t type,
+                                                   int32_t rxlen,
+                                                   int32_t rawFrameLength,
+                                                   int32_t packetChannel,
+                                                   int32_t currentChannel,
+                                                   int32_t frameCtl) {
+    if (outcome <= 0 || outcome >= kMpRxDiagnosticOutcomeCount) {
+        return;
+    }
+
+    const uint32_t count = g_mpRxDiagnosticCounts[outcome].fetch_add(1, std::memory_order_relaxed) + 1;
+    g_mpRxDiagnosticLastOutcome.store(outcome, std::memory_order_relaxed);
+    g_mpRxDiagnosticLastType.store(type, std::memory_order_relaxed);
+    g_mpRxDiagnosticLastRxLen.store(rxlen, std::memory_order_relaxed);
+    g_mpRxDiagnosticLastRawFrameLength.store(rawFrameLength, std::memory_order_relaxed);
+    g_mpRxDiagnosticLastPacketChannel.store(packetChannel, std::memory_order_relaxed);
+    g_mpRxDiagnosticLastCurrentChannel.store(currentChannel, std::memory_order_relaxed);
+    g_mpRxDiagnosticLastFrameCtl.store(frameCtl, std::memory_order_relaxed);
+
+    bool outcomeChanged = false;
+    if (outcome != 1) {
+        outcomeChanged = g_mpRxDiagnosticLastLoggedTerminalOutcome.exchange(outcome, std::memory_order_relaxed) != outcome;
+    }
+    if (count == 1 || isPowerOfTwo(count) || outcomeChanged) {
+        retro::info("LUBAN_NDS_RX outcome={} count={} type={} rxlen={} rawLen={} packetChannel={} currentChannel={} frameCtl={:04X}",
+                    mpRxDiagnosticOutcomeName(outcome),
+                    count,
+                    type,
+                    rxlen,
+                    rawFrameLength,
+                    packetChannel,
+                    currentChannel,
+                    static_cast<uint32_t>(frameCtl) & 0xFFFFU);
+    }
 }
 
 extern "C" void melondsds_record_mp_client_sync_call(void) {
@@ -452,6 +516,17 @@ static void resetMpDiagnostics() {
     g_mpTxFrameCalls.store(0, std::memory_order_relaxed);
     g_mpRxCheckCalls.store(0, std::memory_order_relaxed);
     g_mpClientSyncCalls.store(0, std::memory_order_relaxed);
+    for (auto& count : g_mpRxDiagnosticCounts) {
+        count.store(0, std::memory_order_relaxed);
+    }
+    g_mpRxDiagnosticLastOutcome.store(0, std::memory_order_relaxed);
+    g_mpRxDiagnosticLastType.store(0, std::memory_order_relaxed);
+    g_mpRxDiagnosticLastRxLen.store(0, std::memory_order_relaxed);
+    g_mpRxDiagnosticLastRawFrameLength.store(0, std::memory_order_relaxed);
+    g_mpRxDiagnosticLastPacketChannel.store(0, std::memory_order_relaxed);
+    g_mpRxDiagnosticLastCurrentChannel.store(0, std::memory_order_relaxed);
+    g_mpRxDiagnosticLastFrameCtl.store(0, std::memory_order_relaxed);
+    g_mpRxDiagnosticLastLoggedTerminalOutcome.store(0, std::memory_order_relaxed);
     g_mpChannelChangeCalls.store(0, std::memory_order_relaxed);
     g_mpLastChannel.store(0, std::memory_order_relaxed);
     g_mpFireTxCalls.store(0, std::memory_order_relaxed);
