@@ -29,6 +29,13 @@ extern "C" void melondsds_record_mp_tx_start_call(void);
 extern "C" void melondsds_record_mp_tx_frame_call(void);
 extern "C" void melondsds_record_mp_rx_check_call(void);
 extern "C" void melondsds_record_mp_client_sync_call(void);
+extern "C" void melondsds_record_mp_rx_diagnostic(int32_t outcome,
+                                                   int32_t type,
+                                                   int32_t rxlen,
+                                                   int32_t rawFrameLength,
+                                                   int32_t packetChannel,
+                                                   int32_t currentChannel,
+                                                   int32_t frameCtl);
 extern "C" void melondsds_record_mp_channel_change_call(int32_t channel);
 extern "C" void melondsds_record_mp_fire_tx_gate(int32_t rxCnt,
                                                  int32_t txReq,
@@ -87,6 +94,17 @@ namespace melonDS
 {
 using Platform::Log;
 using Platform::LogLevel;
+
+enum MpRxDiagnosticOutcome
+{
+    MpRxDiagnosticPacketReceived = 1,
+    MpRxDiagnosticLengthOutOfRange = 2,
+    MpRxDiagnosticLengthMismatch = 3,
+    MpRxDiagnosticChannelMismatch = 4,
+    MpRxDiagnosticMacFiltered = 5,
+    MpRxDiagnosticValidationFailed = 6,
+    MpRxDiagnosticStartRx = 7,
+};
 
 
 //#define WIFI_LOG printf
@@ -1686,20 +1704,25 @@ bool Wifi::CheckRX(int type) // 0=regular 1=MP replies 2=MP host frames
     u16 framectl;
     u8 txrate, chan;
     u64 timestamp;
+    size_t rawFrameLength;
+    bool mpPacketReceived;
 
     for (;;)
     {
         timestamp = 0;
+        mpPacketReceived = false;
 
         if (type == 0)
         {
             rxlen = Platform::MP_RecvPacket(RXBuffer, &timestamp, NDS.UserData);
+            mpPacketReceived = rxlen > 0;
             if ((rxlen <= 0) && (!IsMP))
                 rxlen = WifiAP->RecvPacket(RXBuffer);
         }
         else
         {
             rxlen = Platform::MP_RecvHostPacket(RXBuffer, &timestamp, NDS.UserData);
+            mpPacketReceived = rxlen > 0;
             if (rxlen < 0)
             {
                 // host is gone
@@ -1710,18 +1733,40 @@ bool Wifi::CheckRX(int type) // 0=regular 1=MP replies 2=MP host frames
         }
 
         if (rxlen <= 0) return false;
-        if (rxlen > static_cast<int>(sizeof(RXBuffer)) || rxlen < 12+24) continue;
+        if (mpPacketReceived)
+            melondsds_record_mp_rx_diagnostic(MpRxDiagnosticPacketReceived, type, rxlen, 0, 0, 0, 0);
+        if (rxlen > static_cast<int>(sizeof(RXBuffer)) || rxlen < 12+24)
+        {
+            melondsds_record_mp_rx_diagnostic(MpRxDiagnosticLengthOutOfRange,
+                                               type, rxlen, 0, 0, CurChannel, 0);
+            continue;
+        }
 
-        const size_t rawFrameLength = *(u16*)&RXBuffer[10];
+        rawFrameLength = *(u16*)&RXBuffer[10];
+        chan = RXBuffer[9];
+        framectl = *(u16*)&RXBuffer[12+0];
         if (rawFrameLength != static_cast<size_t>(rxlen - 12))
         {
+            melondsds_record_mp_rx_diagnostic(MpRxDiagnosticLengthMismatch,
+                                               type,
+                                               rxlen,
+                                               static_cast<int32_t>(rawFrameLength),
+                                               chan,
+                                               CurChannel,
+                                               framectl);
             Log(LogLevel::Error, "bad frame length %zu/%d\n", rawFrameLength, rxlen-12);
             continue;
         }
 
-        chan = RXBuffer[9];
         if (chan != CurChannel || CurChannel == 0)
         {
+            melondsds_record_mp_rx_diagnostic(MpRxDiagnosticChannelMismatch,
+                                               type,
+                                               rxlen,
+                                               static_cast<int32_t>(rawFrameLength),
+                                               chan,
+                                               CurChannel,
+                                               framectl);
             Log(LogLevel::Debug, "received frame but bad channel %d (expected %d)\n", chan, CurChannel);
             continue;
         }
@@ -1733,13 +1778,26 @@ bool Wifi::CheckRX(int type) // 0=regular 1=MP replies 2=MP host frames
                 MACEqual(&RXBuffer[12 + 4], MPCmdMAC) ||
                 MACEqual(&RXBuffer[12 + 4], MPReplyMAC))
             {
+                melondsds_record_mp_rx_diagnostic(MpRxDiagnosticMacFiltered,
+                                                   type,
+                                                   rxlen,
+                                                   static_cast<int32_t>(rawFrameLength),
+                                                   chan,
+                                                   CurChannel,
+                                                   framectl);
                 continue;
             }
         }
 
-        framectl = *(u16*)&RXBuffer[12+0];
         if (!Wifi::ValidateReceivePacket(rawFrameLength, sizeof(RXBuffer), (framectl & (1<<14)) != 0))
         {
+            melondsds_record_mp_rx_diagnostic(MpRxDiagnosticValidationFailed,
+                                               type,
+                                               rxlen,
+                                               static_cast<int32_t>(rawFrameLength),
+                                               chan,
+                                               CurChannel,
+                                               framectl);
             Log(LogLevel::Error, "unsafe frame length %zu\n", rawFrameLength);
             continue;
         }
@@ -1800,6 +1858,13 @@ bool Wifi::CheckRX(int type) // 0=regular 1=MP replies 2=MP host frames
         }
 
         RXTimestamp = 0;
+        melondsds_record_mp_rx_diagnostic(MpRxDiagnosticStartRx,
+                                           type,
+                                           rxlen,
+                                           static_cast<int32_t>(rawFrameLength),
+                                           chan,
+                                           CurChannel,
+                                           framectl);
         StartRX();
     }
     else if ((frametype == 0x00C0) && timestamp && macgood && IsMPClient)
@@ -1809,6 +1874,13 @@ bool Wifi::CheckRX(int type) // 0=regular 1=MP replies 2=MP host frames
         NextSync = 0;
 
         RXTimestamp = 0;
+        melondsds_record_mp_rx_diagnostic(MpRxDiagnosticStartRx,
+                                           type,
+                                           rxlen,
+                                           static_cast<int32_t>(rawFrameLength),
+                                           chan,
+                                           CurChannel,
+                                           framectl);
         StartRX();
     }
     else if (macgood && IsMPClient)
@@ -1841,6 +1913,13 @@ bool Wifi::CheckRX(int type) // 0=regular 1=MP replies 2=MP host frames
         // otherwise, just start receiving this frame now
 
         RXTimestamp = 0;
+        melondsds_record_mp_rx_diagnostic(MpRxDiagnosticStartRx,
+                                           type,
+                                           rxlen,
+                                           static_cast<int32_t>(rawFrameLength),
+                                           chan,
+                                           CurChannel,
+                                           framectl);
         StartRX();
     }
 
